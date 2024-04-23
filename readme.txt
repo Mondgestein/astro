@@ -8,7 +8,7 @@
     Module       Compiler            Version
     ----------------------------------------
     ATTRIB       Turbo C++           3.00
-    DISKCOMP     Turbo C             2.01
+    DISKCOMP     Turbo C++           1.01
     DISKCOPY     Turbo C++           1.01
     EDIT         Turbo C++           3.00
     FDISK        Turbo C++           3.00

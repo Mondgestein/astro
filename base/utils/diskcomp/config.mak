@@ -1,12 +1,12 @@
 COMPILERPATH=c:\tc
 
-CC=$(COMPILERPATH)\tcc
+CC=tcc
 
-TLINK=$(COMPILERPATH)\tlink
+TLINK=tlink
 
 # -lt and -mt are for .com files
 # add -M to create a map file...
-CFLAGS=-M -I$(COMPILERPATH)\include\ -L$(COMPILERPATH)\lib\ -lt -mt -w -a- -f- -Z
+CFLAGS=-M -lt -mt -w -a- -f- -Z
 
 LIBS=$(COMPILERPATH)\lib\
 
