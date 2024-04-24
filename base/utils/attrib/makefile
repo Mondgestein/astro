@@ -1,6 +1,6 @@
 # Macros for building, deleting ########################################
 
-CC=bcc -mt -lt -N- -Z
+CC=wcl -mt -bcl=com -s
 
 RM=del
 
@@ -9,8 +9,8 @@ RM=del
 
 all: attrib.com
 
-attrib.com: attrib.c types.h *.inc
-	$(CC) attrib.c 
+attrib.com: attrib.c stpcpy.c types.h *.inc
+	$(CC) attrib.c stpcpy.c
 
 
 # Clean up #############################################################

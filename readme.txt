@@ -7,7 +7,6 @@
 
     Module       Compiler            Version
     ----------------------------------------
-    ATTRIB       Turbo C++           3.00
     DISKCOMP     Turbo C++           1.01
     DISKCOPY     Turbo C++           1.01
     EDIT         Turbo C++           3.00
@@ -19,7 +18,6 @@
     MORE         Turbo C++           1.01
     MOVE         Turbo C++           1.01
     NANSI        Macro Assembler     3.00
-    PRINT        Macro Assembler     3.00
     REPLACE      Turbo C++           3.00
     SORT         Turbo C++           1.01
     TREE         Turbo C++           1.01

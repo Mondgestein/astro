@@ -1,5 +1,5 @@
-masm5 print.asm,,,,
-link print.obj,,,,,
+wasm print.asm
+wcl -bcl=dos print.obj
 exe2bin print.exe print.com
 del print.exe
 del *.map

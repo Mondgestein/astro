@@ -37,6 +37,7 @@
 #define ALL_ATTR (ALL_FILE | _A_SUBDIR)
 #define DIR_ATTR ALL_ATTR
 
+char *stpcpy(char *, const char *);
 
 /*======================================================================*/
 
@@ -51,7 +52,7 @@ extern unsigned _Cdecl _stklen = 9*1024u;	/* TC/BC specific	*/
 
 LOCAL byte recurse = 0;
 LOCAL ATTR useattr = ALL_FILE;
-LOCAL ATTR attr_keep = ~0u, attr_set = 0;
+LOCAL ATTR attr_keep = (ATTR)~0u, attr_set = 0;
 
 LOCAL ATTR findattr;
 LOCAL char path [PATHLEN+4],			/* 4=strlen("\\*.*")	*/
