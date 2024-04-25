@@ -2,12 +2,12 @@
 !include "../../../turbo.mak"
 
 
-CFLAGS = $(CFLAGS) -w -f- -a- -K -ln -mc -N -k-
+CFLAGS = $(CFLAGS) -mt -lt -w-par -DUSE_CATGETS
 
 
-all: sort.exe
+all: tree.com
 
 
-sort.exe: sort.c lfnapi.c l2s95.c kitten.c
+tree.com: tree.c getopt.c catgets.c db.c get_line.c
           $(CC) $(CFLAGS) -e$@ $<
           copy $@ ..\..\..\binaries

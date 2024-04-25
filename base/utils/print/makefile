@@ -5,12 +5,12 @@
 AS = masm
 
 
-all: nansi.sys
+all: print.com
 
 
-nansi.sys: nansi.obj nansi_p.obj nansi_f.obj nansi_i.obj
+print.com: print.obj
            link $<;
-           exe2bin -q nansi.exe nansi.sys
+           exe2bin -q print.exe print.com
            copy $@ ..\..\..\binaries
 
 .asm.obj:
