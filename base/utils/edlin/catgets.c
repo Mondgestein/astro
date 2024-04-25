@@ -14,13 +14,9 @@
 #include "nl_types.h"
 #include <ctype.h>
 #include <errno.h>
-#if defined(__STDC__) || defined(STDC_HEADERS) || defined(HAVE_LIMITS_H)
 #include <limits.h>
-#endif
 #include <stdio.h>
-#if defined(__STDC__) || defined(STDC_HEADERS) || defined(HAVE_STRING_H)
 #include <string.h>
-#endif
 #ifdef HAVE_STRINGS_H
 #include <strings.h>
 #endif

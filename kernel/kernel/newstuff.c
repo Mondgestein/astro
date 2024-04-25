@@ -185,7 +185,10 @@ long DosMkTmp(BYTE FAR * pathname, UWORD attr)
 
 */
 
-#define PATH_ERROR goto errRet
+#define PATH_ERROR() \
+      fstrchr(src, '/') == 0 && fstrchr(src, '\\') == 0 \
+        ? DE_FILENOTFND \
+        : DE_PATHNOTFND
 #define PATHLEN 128
 
 
@@ -249,7 +252,7 @@ STATIC const char _DirChars[] = "\"[]:|<>+=;,";
 
 #define addChar(c) \
 { \
-  if (p >= dest + SFTMAX) PATH_ERROR; /* path too long */	\
+  if (p >= dest + SFTMAX) return PATH_ERROR(); /* path too long */	\
   *p++ = c; \
 }
 
@@ -304,17 +307,63 @@ COUNT truename(const char FAR * src, char * dest, COUNT mode)
   cdsEntry = get_cds(result);
   if (cdsEntry == NULL)
   {
-    /* workaround for a device prefixed with invalid drive (e.g. "@:NUL") */
-    /* (MS-DOS always return drive P: for invalid drive. Why P:?) */
-    if (dhp)
+    /* If opening a character device, DOS allows device name
+       to be prefixed by [invalid] drive letter and/or optionally
+       \DEV\ directory prefix, however, any other directory
+       including root (\) is an invalid path if drive is not
+       valid and returns such.
+       Whereas truename always fails for invalid drive.
+    */
+    if (dhp && (mode & CDS_MODE_CHECK_DEV_PATH) && (result >= lastdrive))
     {
+      /* Note: check for (result >= lastdrive) means invalid drive
+         was provided as otherwise we would have used default_drive
+         so we know src in the form of X:?
+         fail if anything other than no path or path is \DEV\
+      */
+      char drivesep[] = "\\/";
+      const char FAR *s = src+2;
+      const char *d = strchr(drivesep, *s); /* ?path starts with \ or / */
+      
+      /* could be 1 letter devicename, don't go scanning random memory */
+      if (*(src+3) != '\0') 
+      {
+        s = fstrchr(src+3, '\\'); /* ?is there \ or / other than immediately after drive: */
+        if (s == NULL) s = fstrchr(src+3, '/');
+      }
+      else
+      {
+        s = NULL;
+      }
+
+      if (d == NULL)
+      {
+        /* either X:devicename or X:path\devicename */
+        if (s != NULL) goto invalid_path;
+      }
+      else
+      {
+        /* either X:\devicename or X:\path\devicename 
+           only X:\DEV\devicename is valid path
+        */
+        if (s == NULL) goto invalid_path;
+        if (s != src+6) goto invalid_path;
+        if (fmemcmp(src+3, "DEV", 3) != 0) goto invalid_path;
+        s = fstrchr(src+7, '\\');
+        if (s == NULL) s = fstrchr(src+7, '/');
+        if (s != NULL) goto invalid_path;
+      }
+  
+      /* use CDS of current drive (MS-DOS may return drive P: for invalid drive.) */
       result = default_drive;
       cdsEntry = get_cds(result);
-      if (cdsEntry == NULL)
-        return DE_PATHNOTFND;
+      if (cdsEntry == NULL) goto invalid_path;
     }
     else
-      return DE_PATHNOTFND;
+    {
+invalid_path:
+        return DE_PATHNOTFND;
+    }
   }
 
   fmemcpy(&TempCDS, cdsEntry, sizeof(TempCDS));
@@ -480,14 +529,18 @@ COUNT truename(const char FAR * src, char * dest, COUNT mode)
 
     if(*src == '.')
     {
+      int dots = 1;
       /* special directory component */
       ++src;
       if (*src == '.') /* skip the second dot */
+      {
         ++src;
+        dots++;
+      }
       if (*src == '/' || *src == '\\' || *src == '\0')
       {
         --p; /* backup the backslash */
-        if (src[-2] == '.')
+        if (dots == 2)
         {
           /* ".." entry */
           /* remove last path component */
@@ -499,12 +552,9 @@ COUNT truename(const char FAR * src, char * dest, COUNT mode)
       }
 
       /* ill-formed .* or ..* entries => return error */
-    errRet:
       /* The error is either PATHNOTFND or FILENOTFND
          depending on if it is not the last component */
-      return fstrchr(src, '/') == 0 && fstrchr(src, '\\') == 0
-        ? DE_FILENOTFND
-        : DE_PATHNOTFND;
+      return PATH_ERROR();
     }
 
     /* normal component */
@@ -537,7 +587,7 @@ COUNT truename(const char FAR * src, char * dest, COUNT mode)
       if (c == '.')
       {
         if (state & PNE_DOT) /* multiple dots are ill-formed */
-          PATH_ERROR;
+          return PATH_ERROR();
         /* strip trailing dot */
         if (*src == '/' || *src == '\\' || *src == '\0')
           break;
@@ -549,7 +599,7 @@ COUNT truename(const char FAR * src, char * dest, COUNT mode)
         state |= PNE_WILDCARD;
       if (i) {	/* name length in limits */
         --i;
-        if (!DirChar(c)) PATH_ERROR;
+        if (!DirChar(c)) return PATH_ERROR();
         addChar(c);
       }
     }

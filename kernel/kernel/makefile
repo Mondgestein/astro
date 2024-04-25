@@ -27,7 +27,7 @@ OBJS=$(OBJS1) $(OBJS2) $(OBJS3) $(OBJS4) $(OBJS5) $(OBJS6) $(OBJS7) $(OBJS8)
 
 #               *Explicit Rules*
 
-production:     ../bin/$(TARGET).sys ../bin/country.sys
+production:     ../bin/$(TARGET).sys
 
 ../bin/$(TARGET).sys: kernel.sys
 		$(CP) kernel.sys ..$(DIRSEP)bin
@@ -36,14 +36,11 @@ production:     ../bin/$(TARGET).sys ../bin/country.sys
 
 # -S to avoid showing expected relocations
 # 0x10 & 0x78 or 0x79 depending on compilation options
-kernel.sys:	kernel.exe ../utils/exeflat.exe
-		..$(DIRSEP)utils$(DIRSEP)exeflat.exe kernel.exe kernel.sys $(LOADSEG) -S0x10 -S0x78 -S0x79 $(UPXOPT) $(XUPX)
+kernel.sys:	kernel.exe ../utils/exeflat.exe ../utils/upxentry.bin ../utils/upxdevic.bin
+		..$(DIRSEP)utils$(DIRSEP)exeflat.exe kernel.exe kernel.sys $(LOADSEG) -S0x10 -S0x78 -S0x79 -E..$(DIRSEP)utils$(DIRSEP)upxentry.bin -D..$(DIRSEP)utils$(DIRSEP)upxdevic.bin $(UPXOPT) $(XUPX)
 
 kernel.exe:	$(TARGET).lnk $(OBJS) $(LIBS)
 		$(LINK) @$(TARGET).lnk;
-
-../bin/country.sys: country.asm
-		$(NASM) -o ../bin/country.sys country.asm
 
 clobber:        clean
 		-$(RM) kernel.exe kernel.sys status.me

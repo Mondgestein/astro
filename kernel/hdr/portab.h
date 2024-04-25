@@ -145,7 +145,8 @@ unsigned short getSS(void);
 
 #ifdef __FAR
 #define I86
-#define __int__(intno) asm volatile("int " ## #intno)
+#define STRINGIFY(x) #x
+#define __int__(intno) asm volatile(STRINGIFY(int $##intno))
 static inline void disable(void)
 {
   asm volatile("cli");
@@ -316,6 +317,13 @@ typedef signed long LONG;
 #else
 #define LONG long
 #endif
+
+#if USHRT_MAX == 0xFFFF
+# define loword(v) ((unsigned short)(v))
+#else
+# define loword(v) (0xFFFF & (unsigned)(v))
+#endif
+#define hiword(v) loword ((v) >> 16u)
 
 #define MK_UWORD(hib,lob) (((UWORD)(hib) <<  8u) | (UBYTE)(lob))
 #define MK_ULONG(hiw,low) (((ULONG)(hiw) << 16u) | (UWORD)(low))

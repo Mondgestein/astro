@@ -122,10 +122,14 @@ WinIdle:					; only HLT if at haltlevel 2+
 
 Int2f3:         cmp     ax,1680h                ; Win "release time slice"
                 je      WinIdle
-                cmp     ah,16h
-                je      FarTabRetn              ; other Win Hook return fast
                 cmp     ah,12h
                 je      IntDosCal               ; Dos Internal calls
+                cmp     ah,13h
+                je      IntDosCal               ; Install Int13h Hook
+                cmp     ah,16h
+                je      IntDosCal               ; Win (Multitasking) Hook
+                cmp     ah,46h
+                je      IntDosCal               ; Win Hook to avoid MCB corruption
 
                 cmp     ax,4a01h
                 je      IntDosCal               ; Dos Internal calls
@@ -135,6 +139,9 @@ Int2f3:         cmp     ax,1680h                ; Win "release time slice"
                 cmp     ax,4a33h                ; Check DOS version 7
                 jne     Check4Share
                 xor     ax,ax                   ; no undocumented shell strings
+                xor     bx,bx                   ; RBIL undoc BX = ?? (0h)
+                                                ;  " DS:DX ASCIIZ shell exe name
+                                                ;  " DS:SI SHELL= line
                 iret
 Check4Share:
 %endif
@@ -243,6 +250,7 @@ IntDosCal:
 SHARE_CHECK:
 		mov	ax, 0x1000
 		int	0x2f
+		test	ax, "US"	; Uninstallable SHARE signature
 		ret
            
 ;           DOS calls this to see if it's okay to open the file.
@@ -251,7 +259,7 @@ SHARE_CHECK:
 ;           error.  If < 0 is returned, it is the negated error return
 ;           code, so DOS simply negates this value and returns it in
 ;           AX.
-; STATIC int share_open_check(char * filename,
+; STATIC int share_open_check(const char FAR * filename,
 ;				/* pointer to fully qualified filename */
 ;                            unsigned short pspseg,
 ;				/* psp segment address of owner process */
@@ -260,13 +268,17 @@ SHARE_CHECK:
 ;			     int sharemode) /* SHARE_COMPAT, etc... */
 		global SHARE_OPEN_CHECK
 SHARE_OPEN_CHECK:
-		mov	es, si		; save si
+		push	ds
+		pop	es		; save ds
+		mov     di, si          ; save si
 		pop	ax		; return address
-		popargs	si,bx,cx,dx	; filename,pspseg,openmode,sharemode;
+		popargs	{ds,si},bx,cx,dx; filename,pspseg,openmode,sharemode;
 		push	ax		; return address
 		mov	ax, 0x10a0
 		int	0x2f	     	; returns ax
-		mov	si, es		; restore si
+		mov     si, di          ; restore si
+		push	es
+		pop	ds		; restore ds
 		ret
 
 ;          DOS calls this to record the fact that it has successfully
@@ -335,6 +347,25 @@ SHARE_LOCK_UNLOCK:
 		mov	ax,0x10a4
 		jmp	short share_common
 
+;           DOS calls this to see if share already has the file marked as open.
+;           Returns:
+;             1 if open
+;             0 if not
+; STATIC WORD share_is_file_open(const char far *filename) /* pointer to fully qualified filename */
+		global SHARE_IS_FILE_OPEN
+SHARE_IS_FILE_OPEN:
+		mov	si, ds
+		mov	es, si		; save ds
+		pop	ax		; save return address
+		pop	si		; filename
+		pop	ds		; SEG filename
+		push	ax		; restore return address
+		mov	ax, 0x10a6
+		int	0x2f	     	; returns ax
+		mov	si, es		; restore ds
+		mov	ds, si
+		ret
+
 ; Int 2F Multipurpose Remote System Calls
 ;
 ; added by James Tabor jimtabor@infohwy.com
@@ -397,6 +428,8 @@ call_int2f:
                 push    cx             ; arg
                 cmp     al, 0ch
                 je      remote_getfree
+                cmp     al, 0xa3
+                je      remote_getfree
                 cmp     al, 1eh
                 je      remote_print_doredir
                 cmp     al, 1fh
@@ -447,6 +480,7 @@ remote_getfree:
                 mov     [di+2],bx
                 mov     [di+4],cx
                 mov     [di+6],dx
+                mov     [di+8],si	; for REM_GETLARGEFREE, unused on REM_GETFREE
                 jmp     short ret_set_ax_to_carry
 
 remote_rw:

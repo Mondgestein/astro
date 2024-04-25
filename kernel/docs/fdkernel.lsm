@@ -1,7 +1,7 @@
 Begin3
 Title:          The FreeDOS Kernel
-Version:        2043
-Entered-date:   Fri 05/14/2021
+Version:        git
+Entered-date:   N/A
 Description:    The FreeDOS Kernel
 Keywords:       kernel, FreeDOS, DOS, MSDOS
 Author:         (developers: can be reached on the freedos-kernel mailing list)

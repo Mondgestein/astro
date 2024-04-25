@@ -38,13 +38,11 @@ static BYTE *mainRcsId =
 #endif
 
 static char copyright[] =
-    "(C) Copyright 1995-2012 Pasquale J. Villani and The FreeDOS Project.\n"
+    "(C) Copyright 1995-2023 Pasquale J. Villani and The FreeDOS Project.\n"
     "All Rights Reserved. This is free software and comes with ABSOLUTELY NO\n"
     "WARRANTY; you can redistribute it and/or modify it under the terms of the\n"
     "GNU General Public License as published by the Free Software Foundation;\n"
     "either version 2, or (at your option) any later version.\n";
-
-struct _KernelConfig InitKernelConfig BSS_INIT({0});
 
 STATIC VOID InitIO(void);
 
@@ -70,10 +68,18 @@ __segment DosTextSeg = 0;
 
 struct lol FAR *LoL = &DATASTART;
 
+struct _KernelConfig InitKernelConfig = { -1 };
+char kernel_command_line[256] = { 0, -1 }; /* special none value */
+int kernel_command_line_length BSS_INIT(0);
+UBYTE debugger_present = 0xFF;	/* initialised in kernel.asm
+				   do NOT set 0 here or compiler may
+				   move it into bss that we zero out */
+
 VOID ASMCFUNC FreeDOSmain(void)
 {
   unsigned char drv;
   unsigned char FAR *p;
+  char * pp;
 
 #ifdef _MSC_VER
   extern FAR prn_dev;
@@ -92,17 +98,8 @@ VOID ASMCFUNC FreeDOSmain(void)
 
   drv = LoL->BootDrive + 1;
   p = MK_FP(0, 0x5e0);
-  if (fmemcmp(p+2,"CONFIG",6) == 0)      /* UPX */
   {
-    fmemcpy(&InitKernelConfig, p+2, sizeof(InitKernelConfig));
-
-    drv = *p + 1;
-    *(DWORD FAR *)(p+2) = 0;
-  }
-  else
-  {
-    *p = drv - 1;
-    fmemcpy(&InitKernelConfig, &LowKernelConfig, sizeof(InitKernelConfig));
+    *p = drv - 1;	/* compatibility with older kernels */
   }
 
   if (drv >= 0x80)
@@ -112,6 +109,23 @@ VOID ASMCFUNC FreeDOSmain(void)
   /* install DOS API and other interrupt service routines, basic kernel functionality works */
   setup_int_vectors();
 
+#ifdef DEBUG
+  /* printf must go after setup_int_vectors call */
+  if (kernel_command_line[0] == 0 && kernel_command_line[1] == (char)-1) {
+    printf("\nKERNEL: Command line is not specified.\n");
+  } else {
+    printf("\nKERNEL: Command line is \"%s\"\n", kernel_command_line);
+  }
+#endif
+
+  kernel_command_line_length = strlen(kernel_command_line);
+  for (pp = kernel_command_line; *pp; ++pp) {
+    if (*pp == ';') {
+      *pp = 0;
+    }
+  }
+
+  /* check if booting from floppy/CD */
   CheckContinueBootFromHarddisk();
 
   /* display copyright info and kernel emulation status */
@@ -158,6 +172,7 @@ STATIC void PSPInit(void)
 
   /* Clear out new psp first                              */
   fmemset(p, 0, sizeof(psp));
+  /* high half is used as environment */
 
   /* initialize all entries and exits                     */
   /* CP/M-like exit point                                 */
@@ -210,9 +225,7 @@ STATIC void PSPInit(void)
   /* p->ps_fcb2.fcb_drive = 0; already set                */
   fmemset(p->ps_fcb2.fcb_fname, ' ', FNAME_SIZE + FEXT_SIZE);
 
-  /* local command line                                   */
-  /* p->ps_cmd.ctCount = 0;     command tail, already set */
-  p->ps_cmd.ctBuffer[0] = 0xd; /* command tail            */
+  /* do not modify command line tail, used as environment */
 }
 
 #ifndef __WATCOMC__
@@ -243,37 +256,41 @@ STATIC void setup_int_vectors(void)
   } vectors[] =
     {
       /* all of these are in the DOS DS */
-      { 0x0, FP_OFF(int0_handler) },   /* zero divide */
-      { 0x1, FP_OFF(empty_handler) },  /* single step */
-      { 0x3, FP_OFF(empty_handler) },  /* debug breakpoint */
-      { 0x6, FP_OFF(int6_handler) },   /* invalid opcode */
-      { 0x19, FP_OFF(int19_handler) },
+      { 0x80 | 0x0, FP_OFF(int0_handler) },   /* zero divide */
+      { 0x80 | 0x1, FP_OFF(empty_handler) },  /* single step */
+      { 0x80 | 0x3, FP_OFF(empty_handler) },  /* debug breakpoint */
+      { 0x80 | 0x6, FP_OFF(int6_handler) },   /* invalid opcode */
+      { 0x19, FP_OFF(int19_handler) }, /* BIOS bootstrap loader, vdisk */
       { 0x20, FP_OFF(int20_handler) },
-      { 0x21, FP_OFF(int21_handler) },
+      { 0x21, FP_OFF(int21_handler) }, /* primary DOS API */
       { 0x22, FP_OFF(int22_handler) },
       { 0x24, FP_OFF(int24_handler) },
-      { 0x25, FP_OFF(low_int25_handler) },
+      { 0x25, FP_OFF(low_int25_handler) }, /* DOS abs read/write calls */
       { 0x26, FP_OFF(low_int26_handler) },
       { 0x27, FP_OFF(int27_handler) },
       { 0x28, FP_OFF(int28_handler) },
       { 0x2a, FP_OFF(int2a_handler) },
-      { 0x2f, FP_OFF(int2f_handler) }
+      { 0x2f, FP_OFF(int2f_handler) }  /* multiplex int */
     };
   struct vec *pvec;
   struct lowvec FAR *plvec;
   int i;
 
-  for (plvec = intvec_table; plvec < intvec_table + 5; plvec++)
+  /* save current int vectors so can restore on reboot and call original directly */
+  for (plvec = intvec_table; plvec < intvec_table + 6; plvec++)
     plvec->isv = getvec(plvec->intno);
+
+  /* install default handlers */
   for (i = 0x23; i <= 0x3f; i++)
-    setvec(i, empty_handler);
+    setvec(i, empty_handler); /* note: int 31h segment should be DOS DS */
   HaltCpuWhileIdle = 0;
   for (pvec = vectors; pvec < vectors + (sizeof vectors/sizeof *pvec); pvec++)
-    setvec(pvec->intno, (intvec)MK_FP(FP_SEG(empty_handler), pvec->handleroff));
+    if ((pvec->intno & 0x80) == 0 || debugger_present == 0)
+      setvec(pvec->intno & 0x7F, (intvec)MK_FP(FP_SEG(empty_handler), pvec->handleroff));
   pokeb(0, 0x30 * 4, 0xea);
   pokel(0, 0x30 * 4 + 1, (ULONG)cpm_entry);
 
-  /* these two are in the device driver area LOWTEXT (0x70) */
+  /* handlers for int 0x1b and 0x29 are in the device driver area LOWTEXT (0x70) */
   setvec(0x1b, got_cbreak);
   setvec(0x29, int29_handler);  /* required for printf! */
 }
@@ -288,7 +305,14 @@ STATIC void init_kernel(void)
   /* Init oem hook - returns memory size in KB    */
   ram_top = init_oem();
 
-  /* move kernel to high conventional RAM, just below the init code */
+  /* Note: HMA_TEXT and init code already moved higher in
+     conventional memory by startup code, however, we still
+	 need to adjust any references to new location.  So use
+	 current CS as that is where we were moved to and perform
+	 any fixups needed.  Note this will also re-copy the 
+	 HMA_TEXT segment, so be sure not to overwrite it prior
+	 to the MoveKernel() call.  Kernel moved to around 8F??:0000
+  */
 #ifdef __WATCOMC__
   lpTop = MK_FP(_CS, 0);
 #else
@@ -413,6 +437,17 @@ STATIC VOID FsConfig(VOID)
 
 STATIC VOID signon()
 {
+	if (InitKernelConfig.Verbose < 0) 
+	{
+#ifdef CUSTOM_BRANDING
+        printf("\n\r" CUSTOM_BRANDING "\n\n");
+#else
+        printf("\n\r%S\n\n", MK_FP(FP_SEG(LoL), FP_OFF(LoL->os_release)));
+#endif
+	} else {
+#ifdef CUSTOM_BRANDING
+  printf("\n\r" CUSTOM_BRANDING "\n\n%s", copyright);
+#else
   printf("\r%S"
          "Kernel compatibility %d.%d - "
 #if defined(__BORLANDC__)
@@ -433,6 +468,8 @@ STATIC VOID signon()
     " - 80386 CPU required"
 #elif defined (I186)
     " - 80186 CPU required"
+#else
+	" - 808x compatible"
 #endif
 
 #ifdef WITHFAT32
@@ -441,6 +478,8 @@ STATIC VOID signon()
   "\n\n%s",
          MK_FP(FP_SEG(LoL), FP_OFF(LoL->os_release)),
          MAJOR_RELEASE, MINOR_RELEASE, copyright);
+#endif
+	}
 }
 
 STATIC void kernel()
@@ -448,8 +487,7 @@ STATIC void kernel()
   CommandTail Cmd;
 
   if (master_env[0] == '\0')   /* some shells panic on empty master env. */
-    strcpy(master_env, "PATH=.");
-  fmemcpy(MK_FP(DOS_PSP + 8, 0), master_env, sizeof(master_env));
+    fmemcpy(master_env, "PATH=.\0\0\0\0", sizeof("PATH=.\0\0\0\0"));
 
   /* process 0       */
   /* Execute command.com from the drive we just booted from    */
@@ -503,20 +541,35 @@ STATIC VOID update_dcb(struct dhdr FAR * dhp)
   COUNT nunits = dhp->dh_name[0];
   struct dpb FAR *dpb;
 
+  /* printf("nblkdev = %i\n", LoL->nblkdev); */
+  
+  /* if no units, nothing to do, ensure at least 1 unit for rest of logic */
+  if (nunits == 0) return;
+
+  /* allocate memory for new device control blocks, insert into chain [at end], and update our pointer to new end */
+  dpb = (struct dpb FAR *)KernelAlloc(nunits * sizeof(struct dpb), 'E', Config.cfgDosDataUmb);
+  
+  /* find end of dpb chain or initialize root if needed */
   if (LoL->nblkdev == 0)
-    dpb = LoL->DPBp;
+  {
+    /* update root pointer to new end (our just allocated block) */
+    LoL->DPBp = dpb;
+  }  
   else
   {
-    for (dpb = LoL->DPBp; (ULONG) dpb->dpb_next != 0xffffffffl;
-         dpb = dpb->dpb_next)
+    struct dpb FAR *tmp_dpb;
+    /* find current end of dpb chain by following next pointers to end */
+    for (tmp_dpb = LoL->DPBp; (ULONG) tmp_dpb->dpb_next != 0xffffffffl; tmp_dpb = dpb->dpb_next)
       ;
-    dpb = dpb->dpb_next =
-      KernelAlloc(nunits * sizeof(struct dpb), 'E', Config.cfgDosDataUmb);
+    /* insert into chain [at end] */
+    tmp_dpb->dpb_next = dpb;
   }
+  /* dpb points to last block, one just allocated */
 
   for (Index = 0; Index < nunits; Index++)
-  {
-    dpb->dpb_next = dpb + 1;
+  {		
+    /* printf("processing unit %i of %i nunits\n", Index, nunits); */
+    dpb->dpb_next = dpb + 1;  /* memory allocated as array, so next is just next element */
     dpb->dpb_unit = LoL->nblkdev;
     dpb->dpb_subunit = Index;
     dpb->dpb_device = dhp;
@@ -526,10 +579,14 @@ STATIC VOID update_dcb(struct dhdr FAR * dhp)
       LoL->CDSp[LoL->nblkdev].cdsDpb = dpb;
       LoL->CDSp[LoL->nblkdev].cdsFlags = CDSPHYSDRV;
     }
-    ++dpb;
+	
+    ++dpb;  /* dbp = dbp->dpb_next; */
     ++LoL->nblkdev;
   }
+  /* note that always at least 1 valid dpb due to above early exit if nunits==0 */
   (dpb - 1)->dpb_next = (void FAR *)0xFFFFFFFFl;
+
+  /* printf("processed %i nunits\n", nunits); */
 }
 
 /* If cmdLine is NULL, this is an internal driver */

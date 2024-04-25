@@ -356,7 +356,7 @@ void init_LBA_to_CHS(struct CHS *chs, ULONG LBA_address,
 void printCHS(char *title, struct CHS *chs)
 {
   /* has no fixed size for head/sect: is often 1/1 in our context */
-  printf("%s%4u-%u-%u", title, chs->Cylinder, chs->Head, chs->Sector);
+  if (InitKernelConfig.Verbose >= 0) printf("%s%4u-%u-%u", title, chs->Cylinder, chs->Head, chs->Sector);
 }
 
 /*
@@ -417,7 +417,7 @@ VOID CalculateFATData(ddt * pddt, ULONG NumSectors, UBYTE FileSystem)
      * (This is really done in fatfs.c, bpbtodpb) */
     {
       unsigned clust = (fatdat - 2 * defbpb->bpb_nfsect) / NSECTORFAT12;
-      unsigned maxclust = (defbpb->bpb_nfsect * 2 * SEC_SIZE) / 3;
+      unsigned maxclust = (defbpb->bpb_nfsect * 2 * FLOPPY_SEC_SIZE) / 3;
       if (maxclust > FAT12MAX)
         maxclust = FAT12MAX;
       printf("FAT12: #clu=%u, fatlength=%u, maxclu=%u, limit=%u\n",
@@ -434,7 +434,7 @@ VOID CalculateFATData(ddt * pddt, ULONG NumSectors, UBYTE FileSystem)
   else
   { /* FAT16/FAT32 */
     CLUSTER fatlength, maxcl;
-    unsigned long clust, maxclust;
+    unsigned long clust, maxclust, rest;
     unsigned fatentpersec;
     unsigned divisor;
 
@@ -458,7 +458,7 @@ VOID CalculateFATData(ddt * pddt, ULONG NumSectors, UBYTE FileSystem)
       defbpb->bpb_ndirent = 0;
       defbpb->bpb_nreserved = 0x20;
       fatdata = NumSectors - 0x20;
-      fatentpersec = FLOPPY_SEC_SIZE/4;
+      fatentpersec = FLOPPY_SEC_SIZE/4;  /* how many 32bit FAT values fit in a default 512 byte sector */
       maxcl = FAT32MAX;
     }
     else
@@ -473,17 +473,19 @@ VOID CalculateFATData(ddt * pddt, ULONG NumSectors, UBYTE FileSystem)
          max FAT16 size for FreeDOS = 4,293,984,256 bytes = 4GiB-983,040 */
       if (fatdata > 8386688ul)
         fatdata = 8386688ul;
-      fatentpersec = FLOPPY_SEC_SIZE/2;
+      fatentpersec = FLOPPY_SEC_SIZE/2; /* how many 16bit FAT values fit in a default 512 byte sector */
       maxcl = FAT16MAX;
     }
 
-    DebugPrintf(("%ld sectors for FAT+data, starting with %d sectors/cluster\n", fatdata, defbpb->bpb_nsector));
+    DebugPrintf(("%lu sectors for FAT+data, starting with %u sectors/cluster\n", fatdata, defbpb->bpb_nsector));
     do
     {
-      DebugPrintf(("Trying with %d sectors/cluster:\n", defbpb->bpb_nsector));
-      divisor = fatentpersec * defbpb->bpb_nsector + NFAT;
-      fatlength = (CLUSTER)((fatdata + (2 * defbpb->bpb_nsector + divisor - 1))/
-                            divisor);
+      DebugPrintf(("Trying with %u sectors/cluster:\n", defbpb->bpb_nsector));
+      divisor = fatentpersec * defbpb->bpb_nsector + NFAT; /* # of fat entries per cluster + 2 */
+      rest = (unsigned)(fatdata % divisor);
+      fatlength  = (CLUSTER)(fatdata / divisor);
+      fatlength += (CLUSTER)((2 * defbpb->bpb_nsector + divisor + rest - 1) / divisor);
+
       /* Need to calculate number of clusters, since the unused parts of the
        * FATS and data area together could make up space for an additional,
        * not really present cluster. */
@@ -492,7 +494,7 @@ VOID CalculateFATData(ddt * pddt, ULONG NumSectors, UBYTE FileSystem)
       if (maxclust > maxcl)
         maxclust = maxcl;
       DebugPrintf(("FAT: #clu=%lu, fatlen=%lu, maxclu=%lu, limit=%lu\n",
-                   clust, fatlength, maxclust, maxcl));
+                   clust, (ULONG)fatlength, maxclust, (ULONG)maxcl));
       if (clust > maxclust - 2)
       {
         clust = 0;
@@ -562,10 +564,10 @@ void DosDefinePartition(struct DriveParamS *driveParam,
   pddt->ddt_driveno = driveParam->driveno;
   pddt->ddt_logdriveno = nUnits;
   pddt->ddt_descflags = driveParam->descflags;
-  /* Turn of LBA if not forced and the partition is within 1023 cyls and of the right type */
+  /* Turn off LBA if not forced and the partition is within 1023 cyls and of the right type */
   /* the FileSystem type was internally converted to LBA_xxxx if a non-LBA partition
      above cylinder 1023 was found */
-  if (!InitKernelConfig.ForceLBA && !ExtLBAForce && !IsLBAPartition(pEntry->FileSystem))
+  if (!(InitKernelConfig.ForceLBA || IsLBAPartition(pEntry->FileSystem) || ExtLBAForce))
     pddt->ddt_descflags &= ~DF_LBA;
   pddt->ddt_ncyl = driveParam->chs.Cylinder;
 
@@ -629,49 +631,47 @@ void DosDefinePartition(struct DriveParamS *driveParam,
 }
 
 /* Get the parameters of the hard disk */
-STATIC int LBA_Get_Drive_Parameters(int drive, struct DriveParamS *driveParam)
+STATIC int LBA_Get_Drive_Parameters(int drive, struct DriveParamS *driveParam, int firstPass)
 {
   iregs regs;
   struct _bios_LBA_disk_parameterS lba_bios_parameters;
 
-  ExtLBAForce = FALSE;
+  if (firstPass && (InitKernelConfig.Verbose >= 1))
+    printf("Checking for LBA support in BIOS for drive %02x\n", drive);
 
   memset(driveParam, 0, sizeof *driveParam);
   drive |= 0x80;
 
-  /* for tests - disable LBA support,
-     even if exists                    */
+  /* use CHS if LBA support is not enabled by kernel configuration */
   if (!InitKernelConfig.GlobalEnableLBAsupport)
   {
+    if (firstPass && (InitKernelConfig.Verbose >= 1)) printf("LBA support disabled.\n");
     goto StandardBios;
   }
   /* check for LBA support */
   regs.b.x = 0x55aa;
   regs.a.b.h = 0x41;
   regs.d.b.l = drive;
+  regs.flags = FLG_CARRY;  /* ensure carry is set to force error if unsupported */
 
   init_call_intr(0x13, &regs);
 
-  if (regs.b.x != 0xaa55 || (regs.flags & 0x01))
+  if ((regs.flags & FLG_CARRY) || regs.b.x != 0xaa55 || !(regs.c.x & 0x01))
   {
+    /* error conditions:
+        carry set or BX != 0xaa55 => no EDD spec compatible BIOS (LBA extensions not supported)
+        CX bit 1 is set if BIOS supports fixed disk subset (Disk Address Packet [DAP] subset),
+        or clear if fixed disk access subset not supported by LBA extensions
+    */
     goto StandardBios;
   }
-
-  /* by ralph :
-     if DAP cannot be used, don't use
-     LBA
-   */
-  if ((regs.c.x & 1) == 0)
-  {
-    goto StandardBios;
-  }
-
-  /* drive supports LBA addressing */
 
   /* version 1.0, 2.0 have different verify */
-  if (regs.a.x < 0x2100)
-    LBA_WRITE_VERIFY = 0x4301;
+  if (regs.a.b.h < 0x21)
+    LBA_WRITE_VERIFY = 0x4301;  /* may be problematic if INT13 is hooked by
+                                   different controllers / drivers */
 
+  /* query disk size and DMA handling, geometry is queried later by INT13,08 */
   memset(&lba_bios_parameters, 0, sizeof(lba_bios_parameters));
   lba_bios_parameters.size = sizeof(lba_bios_parameters);
 
@@ -681,45 +681,66 @@ STATIC int LBA_Get_Drive_Parameters(int drive, struct DriveParamS *driveParam)
   regs.d.b.l = drive;
   init_call_intr(0x13, &regs);
 
-  /* error or DMA boundary errors not handled transparently */
-  if (regs.flags & 0x01)
+  if (regs.flags & FLG_CARRY)
   {
+    /* carry flag set indicates failed LBA disk parameter query */
     goto StandardBios;
   }
 
-  /* verify maximum settings, we can't handle more */
-
   if (lba_bios_parameters.heads > 0xffff ||
       lba_bios_parameters.sectors > 0xffff ||
-      lba_bios_parameters.totalSectHigh != 0)
+      (lba_bios_parameters.totalSect == 0 &&
+       lba_bios_parameters.totalSectHigh == 0))
   {
-    printf("Drive is too large to handle, using only 1st 8 GB\n"
-           " drive %02x heads %lu sectors %lu , total=0x%lx-%08lx\n",
+    if (firstPass) 
+    {
+      printf("Suspicious LBA disk parameters, reverting to CHS access:\n");
+      printf("  drive %02x, heads=%lu, sectors=%lu, total=0x%lx-%08lx\n",
            drive,
            (ULONG) lba_bios_parameters.heads,
            (ULONG) lba_bios_parameters.sectors,
            (ULONG) lba_bios_parameters.totalSect,
            (ULONG) lba_bios_parameters.totalSectHigh);
+    }
 
     goto StandardBios;
   }
 
-  driveParam->total_sectors = lba_bios_parameters.totalSect;
+  /* restrict disk size to 2TB, because we can not handle more */
+  if (lba_bios_parameters.totalSectHigh == 0)
+  {
+    driveParam->total_sectors = lba_bios_parameters.totalSect;
+  }
+  else
+  {
+    if (firstPass) printf("Drive %02x is too large to handle, restricted to 2TB\n", drive);
+    driveParam->total_sectors = 0xffffffffu;
+  }
 
-  /* if we arrive here, success */
+  /* if we arrive here, mark drive as LBA capable */
   driveParam->descflags = DF_LBA;
   if (lba_bios_parameters.information & 8)
     driveParam->descflags |= DF_WRTVERIFY;
+
+  if (lba_bios_parameters.information & 1)
+  {
+    /* DMA boundary errors are handled transparently */
+    driveParam->descflags |= DF_DMA_TRANSPARENT;
+  }
   
-StandardBios:                  /* old way to get parameters */
+StandardBios:   /* get disk geometry, and if LBA is not enabled, also size */
+  if (firstPass && (InitKernelConfig.Verbose >= 1))
+    printf("Retrieving CHS values for drive\n");
 
   regs.a.b.h = 0x08;
   regs.d.b.l = drive;
 
   init_call_intr(0x13, &regs);
 
-  if (regs.flags & 0x01)
+  if (regs.flags & 0x01) 
+  {
     goto ErrorReturn;
+  }
 
   /* int13h call returns max value, store as count (#) i.e. +1 for 0 based heads & cylinders */
   driveParam->chs.Head = (regs.d.x >> 8) + 1; /* DH = max head value = # of heads - 1 (0-255) */
@@ -730,7 +751,8 @@ StandardBios:                  /* old way to get parameters */
   if (driveParam->chs.Sector == 0) {
     /* happens e.g. with Bochs 1.x if no harddisk defined */
     driveParam->chs.Sector = 63; /* avoid division by zero...! */
-    printf("BIOS reported 0 sectors/track, assuming 63!\n");
+    if (firstPass && (InitKernelConfig.Verbose >= 0)) 
+      printf("BIOS reported 0 sectors/track, assuming 63!\n");
   }
 
   if (!(driveParam->descflags & DF_LBA))
@@ -748,9 +770,15 @@ StandardBios:                  /* old way to get parameters */
                driveParam->chs.Head, driveParam->chs.Sector));
   DebugPrintf((" total size %luMB\n\n", driveParam->total_sectors / 2048));
 
-ErrorReturn:
-
   return driveParam->driveno;
+
+
+ErrorReturn:
+  /* to avoid division by zero later, use some sane defaults */
+  driveParam->total_sectors = 0;
+  driveParam->chs.Head = 16;
+  driveParam->chs.Sector = 63;
+  return 0;
 }
 
 /*
@@ -814,10 +842,13 @@ void print_warning_suspect(char *partitionName, UBYTE fs, struct CHS *chs,
 {
   if (!InitKernelConfig.ForceLBA)
   {
-    printf("WARNING: using suspect partition %s FS %02x:", partitionName, fs);
-    printCHS(" with calculated values ", chs);
-    printCHS(" instead of ", pEntry_chs);
-    printf("\n");
+    if (InitKernelConfig.Verbose >= 0) 
+    {
+      printf("WARNING: using suspect partition %s FS %02x:", partitionName, fs);
+      printCHS(" with calculated values ", chs);
+      printCHS(" instead of ", pEntry_chs);
+      printf("\n");
+    }
   }
   memcpy(pEntry_chs, chs, sizeof(struct CHS));
 }
@@ -888,6 +919,7 @@ BOOL ScanForPrimaryPartitions(struct DriveParamS * driveParam, int scan_type,
     if (chs.Cylinder > 1023 || end.Cylinder > 1023)
     {
 
+      /* if partition exceeds bounds of CHS addressing but LBA is not supported then skip partition */
       if (!(driveParam->descflags & DF_LBA))
       {
         printf
@@ -901,8 +933,11 @@ BOOL ScanForPrimaryPartitions(struct DriveParamS * driveParam, int scan_type,
         continue;
       }
 
-      if (!InitKernelConfig.ForceLBA && !ExtLBAForce 
-          && !IsLBAPartition(pEntry->FileSystem))
+      /* if partition exceeds bounds of CHS addressing and we can use LBA 
+	     but partition type indicates to use CHS then print warning 
+         and force internal filesystem indicator to enable LBA
+      */
+      if (!(InitKernelConfig.ForceLBA || IsLBAPartition(pEntry->FileSystem) || ExtLBAForce))
       {
         printf
             ("WARNING: Partition ID does not suggest LBA - part %s FS %02x.\n"
@@ -973,6 +1008,11 @@ int Read1LBASector(struct DriveParamS *driveParam, unsigned drive,
 
   for (num_retries = 0; num_retries < N_RETRY; num_retries++)
   {
+    if (InitKernelConfig.Verbose >= 1)
+    {
+        printf("retry# %i sector %lu\n", num_retries, LBA_address);
+    }
+
     regs.d.b.l = drive | 0x80;
     LBA_to_CHS(&chs, LBA_address, driveParam);
     /* Some old "security" software (PROT) traps int13 and assumes non
@@ -982,8 +1022,9 @@ int Read1LBASector(struct DriveParamS *driveParam, unsigned drive,
        the extended LBA partition type indicator.
     */
     if ((driveParam->descflags & DF_LBA) &&
-        (InitKernelConfig.ForceLBA || ExtLBAForce || chs.Cylinder > 1023))
+        (InitKernelConfig.ForceLBA || ExtLBAForce || (chs.Cylinder > 1023)))
     {
+      if (InitKernelConfig.Verbose >= 1) printf("LBA mode\n");
       dap.number_of_blocks = 1;
       dap.buffer_address = buffer;
       dap.block_address_high = 0;       /* clear high part */
@@ -996,6 +1037,7 @@ int Read1LBASector(struct DriveParamS *driveParam, unsigned drive,
     }
     else
     {                           /* transfer data, using old bios functions */
+      if (InitKernelConfig.Verbose >= 1) printf("CHS mode\n");
       /* avoid overflow at end of track */
 
       if (chs.Cylinder > 1023)
@@ -1024,6 +1066,7 @@ int Read1LBASector(struct DriveParamS *driveParam, unsigned drive,
 /* Load the Partition Tables and get information on all drives */
 int ProcessDisk(int scanType, unsigned drive, int PartitionsToIgnore)
 {
+  /* note: error messages are only printed on first call, where (scanType==SCAN_PRIMARYBOOT) */
 
   struct PartTableEntry PTable[4];
   ULONG RelSectorOffset;
@@ -1038,7 +1081,7 @@ int ProcessDisk(int scanType, unsigned drive, int PartitionsToIgnore)
   /* Get the hard drive parameters and ensure that the drive exists. */
   /* If there was an error accessing the drive, skip that drive. */
 
-  if (!LBA_Get_Drive_Parameters(drive, &driveParam))
+  if (!LBA_Get_Drive_Parameters(drive, &driveParam,(scanType==SCAN_PRIMARYBOOT)))
   {
     printf("can't get drive parameters for drive %02x\n", drive);
     return PartitionsToIgnore;
@@ -1046,6 +1089,9 @@ int ProcessDisk(int scanType, unsigned drive, int PartitionsToIgnore)
 
   RelSectorOffset = 0;          /* boot sector */
   ExtendedPartitionOffset = 0;  /* not found yet */
+  ExtLBAForce = 0;      /* initially we are not dealing with partitions
+                           within a type 0x0E LBA extended partition,
+                           so we do not enforce LBA access by now  */
 
   /* Read the Primary Partition Table. */
 
@@ -1072,7 +1118,7 @@ strange_restart:
     if (++strangeHardwareLoop < 3)
       goto strange_restart;
 
-    printf("illegal partition table - drive %02x sector %lu\n", drive,
+    if (scanType==SCAN_PRIMARYBOOT) printf("illegal partition table - drive %02x sector %lu\n", drive,
            RelSectorOffset);
     return PartitionsToIgnore;
   }
@@ -1102,7 +1148,7 @@ strange_restart:
     {
       RelSectorOffset = ExtendedPartitionOffset + PTable[iPart].RelSect;
 
-      if (ExtendedPartitionOffset == 0)
+      if (ExtendedPartitionOffset == 0) /* first extended in chain? */
       {
         ExtendedPartitionOffset = PTable[iPart].RelSect;
         /* grand parent LBA -> all children and grandchildren LBA */
@@ -1313,7 +1359,7 @@ void ReadAllPartitionTables(void)
 
   if (InitKernelConfig.DLASortByDriveNo == 0)
   {
-    /* printf("Drive Letter Assignment - DOS order\n"); */
+    if (InitKernelConfig.Verbose >= 1) printf("Drive Letter Assignment - DOS order\n");
 
     /* Process primary partition table   1 partition only      */
     for (HardDrive = 0; HardDrive < nHardDisk; HardDrive++)
@@ -1342,13 +1388,13 @@ void ReadAllPartitionTables(void)
   {
     UBYTE bootdrv = peekb(0,0x5e0);
 
-    /* printf("Drive Letter Assignment - sorted by drive\n"); */
+    if (InitKernelConfig.Verbose >= 1) printf("Drive Letter Assignment - sorted by drive\n");
 
     /* Process primary partition table   1 partition only      */
     for (HardDrive = 0; HardDrive < nHardDisk; HardDrive++)
     {
       struct DriveParamS driveParam;
-      if (LBA_Get_Drive_Parameters(HardDrive, &driveParam) &&
+      if (LBA_Get_Drive_Parameters(HardDrive, &driveParam, 0) &&
           driveParam.driveno == bootdrv)
       {
         foundPartitions[HardDrive] =
@@ -1376,14 +1422,26 @@ void ReadAllPartitionTables(void)
       ProcessDisk(SCAN_PRIMARY2, HardDrive, foundPartitions[HardDrive]);
     }
   }
+  
+  if (InitKernelConfig.Verbose >= 0)
+  {
+    unsigned foundPartitionsCount = 0;
+    /* Tell user if no valid partitions found on any hard drive     */
+    for (HardDrive = 0; HardDrive < nHardDisk; HardDrive++)
+    {
+      foundPartitionsCount += foundPartitions[HardDrive];
+    }
+    /* printf("Found %i partitions\n", foundPartitionsCount); */
+    if (!foundPartitionsCount) printf("No supported partitions found.\n");
+  }
 }
 
 /* disk initialization: returns number of units */
 COUNT dsk_init()
 {
-  printf(" - InitDisk");
+  if (InitKernelConfig.Verbose >= 1) printf("\nInitDisk\n");
 
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(DOSEMU)
   {
     iregs regs;
     regs.a.x = 0x1112;          /* select 43 line mode - more space for partinfo */

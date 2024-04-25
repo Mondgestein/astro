@@ -24,37 +24,58 @@
 ; License along with DOS-C; see the file COPYING.  If not,
 ; write to the Free Software Foundation, 675 Mass Ave,
 ; Cambridge, MA 02139, USA.
-;
-;
-;       +--------+ 1FE0:7E00
-;       |BOOT SEC|
-;       |RELOCATE|
-;       |--------| 1FE0:7C00
-;       |LBA PKT |
-;       |--------| 1FE0:7BC0
-;       |--------| 1FE0:7BA0
-;       |BS STACK|
-;       |--------|
-;       |4KBRDBUF| used to avoid crossing 64KB DMA boundary
-;       |--------| 1FE0:63A0
-;       |        |
-;       |--------| 1FE0:3000
-;       | CLUSTER|
-;       |  LIST  |
-;       |--------| 1FE0:2000
-;       |        |
-;       |--------| 0000:7E00
-;       |BOOT SEC| overwritten by max 128k FAT buffer
-;       |ORIGIN  | and later by max 134k loaded kernel
-;       |--------| 0000:7C00
-;       |        |
-;       |--------|
-;       |KERNEL  | also used as max 128k FAT buffer
-;       |LOADED  | before kernel loading starts
-;       |--------| 0060:0000
-;       |        |
-;       +--------+
 
+
+; Memory layout for the FreeDOS FAT12/FAT16 boot process:
+;
+;	...
+;	|-------| 1FE0h:7E00h = 27C00h (159 KiB)
+;	|BOOTSEC| loader relocates itself here first thing,
+;	|RELOC.	|  before loading root directory/FAT/kernel file
+;	|-------| 1FE0h:7C00h = 27A00h (158 KiB)
+;	|  gap  | PARAMS live here
+;	|LBA PKT| LBA disk packet
+;	|-------| 1FE0h:7BC0h = 279C0h (158 KiB)
+;	|  gap  | READADDR_* live here
+;	|-------| 1FE0h:7BA0h = 279A0h (158 KiB)
+;	| STACK | below relocated loader, above sector buffer (size 5.9 KiB)
+;	...
+;	|-------| 1FE0h:6400h = 26200h (152 KiB)
+;	|SEC.BUF| sector buffer, to avoid crossing 64 KiB DMA boundary (size 8 KiB)
+;	|-------| 1FE0h:4400h = 24200h (144 KiB)
+;	...
+;	|-------| 1FE0h:4380h = 24182h (144 KiB)
+;	|CLUSTER| built from FAT, listing every cluster of the kernel file.
+;	| LIST  |  file <= 134 KiB, cluster >= 32 Byte, hence <= 8578 B list.
+;	|-------| 1FE0h:2200h = 22000h (136 KiB)
+;	...
+;	|-------| 0000h:7E00h = 07E00h (31.5 KiB)
+;	|BOOTSEC| possibly overwritten by the FAT (<= 128 KiB) and the kernel,
+;	|ORIGIN |  so the bootsector relocates itself up...
+;	|-------| 0000h:7C00h = 07C00h (31 KiB)
+;	...
+;	|-------|
+;	|KERNEL	| maximum size 128 KiB (overwrites bootsec origin)
+;	|LOADED	| (holds directory then FAT before kernel file load)
+;	|-------| 0060h:0000h = 00600h (1.5 KiB)
+;	...
+; The entire root directory is loaded to the kernel load address
+;  to scan for the kernel file. It is assumed to fit into 128 KiB.
+;  Typical root directory size is up to 512 entries = 16 KiB.
+;  Further, it is assumed that at least one root directory entry
+;  starts with a NUL byte to signify the end of the directory.
+; After the directory entry is found, the entire FAT is loaded to
+;  the kernel load address. It is assumed that the size of the FAT
+;  in sectPerFat will not lead to a FAT larger than 128 KiB, which
+;  is the maximum size a FAT16 may fully utilise.
+; The kernel load segment may be patched using the SYS /L switch.
+;  We support values between 0x60 and 0x200 here, with file size
+;  of up to 128 KiB (rounded to cluster size). Default is 0x60.
+; This loader traditionally supports file sizes up to 134 KiB,
+;  assuming the default segment of 0x60. This does require a
+;  cluster size of 4 KiB (leads to maximum 132 KiB) or 2 KiB or
+;  lower (maximum 134 KiB). A more portable maximum is 128 KiB,
+;  which works with cluster sizes up to 128 KiB.
 
 ;%define ISFAT12         1
 ;%define ISFAT16         1
@@ -66,6 +87,10 @@
 %elifndef ISFAT16
   %error Must select one FS
 %endif
+
+                ; NOTE: sys must be updated if magic offsets change
+%assign ISFAT1216DUAL 1
+	%include "magic.mac"
 
 
 segment .text
@@ -99,8 +124,8 @@ Entry:          jmp     short real_start
 
 %define LOADSEG         0x0060
 
-%define FATBUF          0x2000          ; offset of temporary buffer for FAT
-                                        ; chain
+%define CLUSTLIST       0x2200          ; offset of temporary buffer for FAT
+                                        ; chain cluster list
 
 ;       Some extra variables
 
@@ -134,9 +159,9 @@ Entry:          jmp     short real_start
 %define LBA_SECTOR_32  word [LBA_PACKET+12]
 %define LBA_SECTOR_48  word [LBA_PACKET+14]
 
-%define READBUF 0x63A0 ; max 4KB buffer (min 2KB stack), == stacktop-0x1800
-%define READADDR_OFF   BP-0x60-0x1804    ; pointer within user buffer
-%define READADDR_SEG   BP-0x60-0x1802
+%define READBUF 0x4400                      ; max 8 KiB buffer
+%define READADDR_OFF   word BP-0x60         ; pointer within user buffer
+%define READADDR_SEG   word BP-0x60+2
 
 %define PARAMS LBA_PACKET+0x10
 ;%define RootDirSecs     PARAMS+0x0         ; # of sectors root dir uses
@@ -178,6 +203,7 @@ real_start:
                 jmp     word 0x1FE0:cont
 
 loadseg_off     dw      0
+	magicoffset "loadseg", 5Ch, 5Ch
 loadseg_seg     dw      LOADSEG
 
 cont:
@@ -190,6 +216,7 @@ cont:
 ; in DL, however we work around this in SYS.COM by NOP'ing out the use of DL
 ; (formerly we checked for [drive]==0xff; update sys.c if code moves)
 ;
+	magicoffset "set unit", 66h, 66h
                 mov     [drive], dl     ; rely on BIOS drive number in DL
 
                 mov     LBA_SIZE, 10h
@@ -266,7 +293,7 @@ next_entry:     mov     cx, 11
                 cmp     byte [es:di], 0 ; if the first byte of the name is 0,
                 jnz     next_entry      ; there is no more files in the directory
 
-                jc      boot_error      ; fail if not found
+                jmp     boot_error      ; fail if not found
 ffDone:
                 push    ax              ; store first cluster number
 
@@ -294,7 +321,7 @@ ffDone:
                 push    ds
                 pop     es
                 mov     ds, [loadseg_60]
-                mov     di, FATBUF
+                mov     di, CLUSTLIST
 
 next_clust:     stosw                           ; store cluster number
                 mov     si, ax                  ; SI = cluster number
@@ -351,7 +378,7 @@ finished:       ; Mark end of FAT chain with 0, so we have a single
 
                 les     bx, [loadsegoff_60]   ; set ES:BX to load address 60:0
 
-                mov     si, FATBUF      ; set DS:SI to the FAT chain
+                mov     si, CLUSTLIST           ; set DS:SI to the FAT chain
 
 cluster_next:   lodsw                           ; AX = next cluster to read
                 or      ax, ax                  ; EOF?
@@ -363,7 +390,9 @@ load_next:      dec     ax                      ; cluster numbers start with 2
                 dec     ax
 
                 mov     di, word [bsSecPerClust]
-                and     di, 0xff                ; DI = sectors per cluster
+                dec     di                      ; minus one if 256 spc
+                and     di, 0xff                ; DI = sectors per cluster - 1
+                inc     di                      ; = spc
                 mul     di
                 add     ax, [data_start]
                 adc     dx, [data_start+2]      ; DX:AX = first sector to read
@@ -408,8 +437,12 @@ readDisk:       push    si
                 mov     word [READADDR_SEG], es
                 mov     word [READADDR_OFF], bx
 
+%ifndef QUIET
                 call    show
                 db      ".",0
+%else ; ensure code after this still at same location
+				times 5 nop
+%endif
 read_next:
 
 ;******************** LBA_READ *******************************
@@ -420,15 +453,7 @@ read_next:
                 mov     bx,055aah               ;
                 mov     dl, [drive]
 
-                ; NOTE: sys must be updated if location changes!!!
-%ifdef ISFAT12
-  %define LBA_TEST_OFFSET 179h
-%elifdef ISFAT16
-  %define LBA_TEST_OFFSET 176h
-%endif
-%if ($ - Entry) != LBA_TEST_OFFSET
-    %error Must update constant offset (LBA_TEST_OFFSET) to test dl,dl here and in sys.c for FATFS
-%endif
+	magicoffset "LBA detection", 17Bh, 178h
                 test    dl,dl                   ; don't use LBA addressing on A:
                 jz      read_normal_BIOS        ; might be a (buggy)
                                                 ; CDROM-BOOT floppy emulation
@@ -532,6 +557,7 @@ do_int13_read:
 
        times   0x01f1-$+$$ db 0
 
+	magicoffset "kernel name", 1F1h, 1F1h
 filename        db      "KERNEL  SYS",0,0
 
 sign            dw      0xAA55

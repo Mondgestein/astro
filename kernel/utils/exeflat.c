@@ -53,7 +53,11 @@ large portions copied from task.c
 
 #define BUFSIZE 32768u
 
-#define KERNEL_START 0x16 /* the kernel code really starts here at 60:16 */
+#define KERNEL_CONFIG_LENGTH (32 - 2 - 4)
+	/* 32 entrypoint structure,
+	   2 entrypoint short jump,
+	   4 near jump / ss:sp storage  */
+unsigned char kernel_config[KERNEL_CONFIG_LENGTH];
 
 typedef struct {
   UWORD off, seg;
@@ -77,15 +81,17 @@ static int compReloc(const void *p1, const void *p2)
 static void usage(void)
 {
   printf("usage: exeflat (src.exe) (dest.sys) (relocation-factor)\n");
-  printf
-      ("               -S10   - Silent relocate segment 10 (down list)\n");
-  
+  printf("               -S10   - Silent relocate segment 10 (down list)\n");
+  printf("               -E(path/to/upxentry.bin)   - Omit to force DOS/SYS compression\n");
+  printf("               -D(path/to/upxdevic.bin)   - Omit to force DOS/EXE compression\n");
+  printf("               -U (command) (parameters)  - Specify to use UPX compression\n");
   exit(1);
 }
 
 static int exeflat(const char *srcfile, const char *dstfile,
                    const char *start, short *silentSegments, short silentcount,
-                   int UPX, exe_header *header)
+                   int UPX, UWORD stubexesize, UWORD stubdevsize,
+                   UWORD entryparagraphs, exe_header *header)
 {
   int i, j;
   size_t bufsize;
@@ -94,10 +100,11 @@ static int exeflat(const char *srcfile, const char *dstfile,
   ULONG size, to_xfer;
   UBYTE **buffers;
   UBYTE **curbuf;
+  UWORD curbufoffset;
   FILE *src, *dest;
   short silentdone = 0;
-  int compress_sys_file;
-  UWORD realentry;
+  int compress_sys_file = 0;
+  UWORD stubsize = 0;
 
   if ((src = fopen(srcfile, "rb")) == NULL)
   {
@@ -117,6 +124,7 @@ static int exeflat(const char *srcfile, const char *dstfile,
     exit(1);
   }
   start_seg = (UWORD)strtol(start, NULL, 0);
+  start_seg += entryparagraphs;
   if (header->exExtraBytes == 0)
     header->exExtraBytes = 0x200;
   printf("header len = %lu = 0x%lx\n", header->exHeaderSize * 16UL,
@@ -199,14 +207,12 @@ static int exeflat(const char *srcfile, const char *dstfile,
   printf("\nProcessed %d relocations, %d not shown\n",
          header->exRelocItems, silentdone);
 
-  realentry = KERNEL_START;
-  if (buffers[0][0] == 0xeb /* jmp short */)
+  if (UPX)
   {
-    realentry = buffers[0][1] + 2;
-  }
-  else if (buffers[0][0] == 0xe9 /* jmp near */)
-  {
-    realentry = ((UWORD)(buffers[0][2]) << 8) + buffers[0][1] + 3;
+    struct x {
+      char y[(KERNEL_CONFIG_LENGTH + 2) <= BUFSIZE ? 1 : -1];
+    };
+    memcpy(kernel_config, &buffers[0][2], KERNEL_CONFIG_LENGTH);
   }
 
   if ((dest = fopen(dstfile, "wb+")) == NULL)
@@ -215,136 +221,190 @@ static int exeflat(const char *srcfile, const char *dstfile,
     exit(1);
   }
 
-  /* The biggest .sys file that UPX accepts seems to be 65419 bytes long */
-  compress_sys_file = size < 65420;
+  /* The biggest .sys file that UPX accepts seems to be 65419 bytes long.
+	Actually, UPX 3.96 appears to accept DOS/SYS files up to 65426 bytes.
+	To avoid problems we use a slightly lower limit. */
   if (UPX) {
-      printf("Compressing kernel - %s format\n", (compress_sys_file)?"sys":"exe");
-  }
-  if (UPX && !compress_sys_file) {
+    if (stubdevsize && stubexesize)
+      compress_sys_file = (size - stubdevsize) <= /* 65426 */ 65400;
+	/* would need to subtract 0x10 for the device header here
+		but then add in the same, because we skip 0x10 bytes
+		of the source file but fill the same length with the
+		doctored device header. so (size - stubdevsize) gives
+		the exact result that we want to compare against. */
+    else if (stubexesize)
+      compress_sys_file = 0;
+    else if (stubdevsize)
+      compress_sys_file = 1;
+    else {
+      printf("Error: Entry file must be specified\n");
+      exit(1);
+    }
+    printf("Compressing kernel - %s format\n", (compress_sys_file)?"sys":"exe");
+   if (!compress_sys_file) {
     ULONG realsize;
     /* write header without relocations to file */
     exe_header nheader = *header;
     nheader.exRelocItems = 0;
     nheader.exHeaderSize = 2;
-    realsize = size + 32;
+    stubsize = stubexesize;
+    realsize = size + 32 - stubsize;
     nheader.exPages = (UWORD)(realsize >> 9);
     nheader.exExtraBytes = (UWORD)realsize & 511;
     if (nheader.exExtraBytes)
       nheader.exPages++;
+    nheader.exInitCS = - (stubsize >> 4);
+    nheader.exInitIP = stubsize;
     if (fwrite(&nheader, sizeof(nheader), 1, dest) != 1) {
       printf("Destination file write error\n");
       exit(1);
     }
     fseek(dest, 32UL, SEEK_SET);
+    if (stubsize < 0xC0) {
+      UWORD branchlength = 0xC0 - stubsize;
+      if ((branchlength - 2) < 0x80) {
+        buffers[0][stubsize] = 0xEB; /* short jump */
+        buffers[0][stubsize + 1] = branchlength - 2;
+      } else {
+        branchlength -= 3;
+        buffers[0][stubsize] = 0xE9; /* near jump */
+        buffers[0][stubsize + 1] = branchlength & 0xFF;
+        buffers[0][stubsize + 2] = (branchlength >> 8) & 0xFF;
+      }
+    }
+   } else {
+    /* create device header. it goes before the image. after
+	decompression its strategy is entered from the UPX
+	depacker. it consists of 5 words and a far jump:
+	next device offset, next device segment, attributes,
+	the fourth word is the offset of strategy entry,
+	the fifth word would be offset of interrupt entry
+	(not used by UPX apparently but better to give it). */
+    UBYTE deviceheader[16] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    UWORD segment = start_seg;
+    UWORD offset = 0xC0;
+    stubsize = stubdevsize + 0x10;	/* 0x10 for deviceheader */
+    /* strategy will jump to us, interrupt never called */
+    deviceheader[6] = 10;
+    deviceheader[7] = 0;	/* needed: strategy entry */
+    deviceheader[8] = 10;
+    deviceheader[9] = 0;	/* interrupt entry */
+    deviceheader[10] = 0xEA;	/* jump far immediate */
+    deviceheader[11] = offset & 0xFF;
+    deviceheader[12] = (offset >> 8) & 0xFF;
+    deviceheader[13] = segment & 0xFF;
+    deviceheader[14] = (segment >> 8) & 0xFF;
+    if (fwrite(deviceheader, 1, sizeof deviceheader, dest)
+        != sizeof deviceheader) {
+      printf("Destination file write error\n");
+      exit(1);
+    }
+   }
   }
 
   /* write dest file from memory chunks */
-  bufsize = BUFSIZE;
-  for (to_xfer = size, curbuf = buffers; to_xfer > 0;
-       to_xfer -= bufsize, curbuf++)
   {
-    if (to_xfer < BUFSIZE)
+    struct x {
+      char y[0xC0 < BUFSIZE ? 1 : -1];
+	/* insure the stub fits into the first chunk buffer.
+		needed for the branch patch above, and to
+		skip the source data corresponding to the
+		stub in the first iteration of the loop below. */
+    };
+  }
+  /* stubsize = 0 if not UPX */
+  curbufoffset = stubsize;
+  bufsize = BUFSIZE - stubsize;
+  to_xfer = size - stubsize;
+  for (curbuf = buffers; to_xfer > 0;
+       to_xfer -= bufsize, curbuf++, curbufoffset = 0, bufsize = BUFSIZE)
+  {
+    if (to_xfer < bufsize)
       bufsize = (size_t)to_xfer;
-    if (fwrite(*curbuf, sizeof(char), bufsize, dest) != bufsize)
-
+    if (fwrite(&(*curbuf)[curbufoffset], sizeof(char), bufsize, dest) != bufsize)
     {
       printf("Destination file write error\n");
       exit(1);
     }
     free(*curbuf);
   }
-
-  if (UPX && compress_sys_file) {
-    /* overwrite first 8 bytes with SYS header */
-    UWORD dhdr[4];
-    fseek(dest, 0, SEEK_SET);
-    for (i = 0; i < 3; i++)
-      dhdr[i] = 0xffff;
-    /* strategy will jump to us, interrupt never called */
-    dhdr[3] = realentry; /* KERNEL_START; */
-    fwrite(dhdr, sizeof(dhdr), 1, dest);
-    printf("KERNEL_START = 0x%04x\n", realentry);
-  }
   fclose(dest);
   return compress_sys_file;
 }
 
-static void write_header(FILE *dest, size_t size)
+static void write_header(FILE *dest, unsigned char * code, UWORD stubsize,
+  const char *start, int compress_sys_file, exe_header *header)
 {
-  /* UPX HEADER jump $+2+size */
-  static char JumpBehindCode[] = {
-    /* kernel config header - 32 bytes */
-    0xeb, 0x1b,               /*     jmp short realentry */
-    'C', 'O', 'N', 'F', 'I', 'G', 6, 0,      /* WORD */
-    0,                        /* DLASortByDriveNo            db 0  */
-    1,                        /* InitDiskShowDriveAssignment db 1  */
-    2,                        /* SkipConfigSeconds           db 2  */
-    0,                        /* ForceLBA                    db 0  */
-    1,                        /* GlobalEnableLBAsupport      db 1  */
-    0,                        /* BootHarddiskSeconds               */
+  UWORD stackpointerpatch, stacksegmentpatch, psppatch, csippatch, patchvalue;
+  UWORD end;
+  UWORD start_seg = (UWORD)strtol(start, NULL, 0);
 
-    'n', 'u', 's', 'e', 'd',     /* unused filler bytes                              */
-    8, 7, 6, 5, 4, 3, 2, 1,
-    /* real-entry: jump over the 'real' image do the trailer */
-    0xe9, 0, 0                /* 100: jmp 103 */
-  };
+  stackpointerpatch = code[0x100] + code[0x100 + 1] * 256U;
+  stacksegmentpatch = code[0x102] + code[0x102 + 1] * 256U;
+  psppatch = code[0x104] + code[0x104 + 1] * 256U;
+  csippatch = code[0x106] + code[0x106 + 1] * 256U;
+  end = code[0x108] + code[0x108 + 1] * 256U;
+  if (csippatch > (end - 4) || csippatch < 32
+      || end > 0xC0 || end < 32) {
+    printf("Invalid entry file patch offsets\n");
+    exit(1);
+  }
+  if (compress_sys_file) {
+    if (stackpointerpatch != 0
+        || stacksegmentpatch != 0
+        || psppatch != 0
+        || end > (0xC0 - 0x10) || end < 32) {
+      printf("Invalid entry file patch offsets\n");
+      exit(1);
+    }
+  } else {
+    if (stackpointerpatch > (end - 2) || stackpointerpatch < 32
+        || stacksegmentpatch > (end - 2) || stacksegmentpatch < 32
+        || psppatch > (end - 2) || psppatch < 32) {
+      printf("Invalid entry file patch offsets\n");
+      exit(1);
+    }
+  }
 
-  struct x {
-    char y[sizeof(JumpBehindCode) == 0x20 ? 1 : -1];
-  };
+  if (!compress_sys_file) {
+    patchvalue = code[stackpointerpatch] + code[stackpointerpatch + 1] * 256U;
+    patchvalue += header->exInitSP;
+    code[stackpointerpatch] = patchvalue & 0xFF;
+    code[stackpointerpatch + 1] = (patchvalue >> 8) & 0xFF;
+    patchvalue = code[stacksegmentpatch] + code[stacksegmentpatch + 1] * 256U;
+    patchvalue += header->exInitSS + start_seg + (stubsize >> 4);
+    code[stacksegmentpatch] = patchvalue & 0xFF;
+    code[stacksegmentpatch + 1] = (patchvalue >> 8) & 0xFF;
+    patchvalue = code[psppatch] + code[psppatch + 1] * 256U;
+    patchvalue += start_seg + (stubsize >> 4);
+    code[psppatch] = patchvalue & 0xFF;
+    code[psppatch + 1] = (patchvalue >> 8) & 0xFF;
+  }
+  /* ip and cs entered into header for DOS/SYS format*/
+  patchvalue = header->exInitIP;
+  code[csippatch] = patchvalue & 0xFF;
+  code[csippatch + 1] = (patchvalue >> 8) & 0xFF;
+  patchvalue = header->exInitCS + start_seg + (stubsize >> 4);
+  code[csippatch + 2] = patchvalue & 0xFF;
+  code[csippatch + 3] = (patchvalue >> 8) & 0xFF;
+
+  if (0 == memcmp(kernel_config, "CONFIG", 6)) {
+    unsigned long length = kernel_config[6] + kernel_config[7] * 256UL + 8;
+    if (length <= KERNEL_CONFIG_LENGTH) {
+      memcpy(&code[2], kernel_config, (size_t)length);
+      printf("Copied %lu bytes of kernel config block to header\n", length);
+    } else {
+      printf("Error: Found %lu bytes of kernel config block, too long!\n", length);
+    }
+  } else {
+    printf("Error: Found no kernel config block!\n");
+  }
 
   fseek(dest, 0, SEEK_SET);
-  /* this assumes <= 0xfe00 code in kernel */
-  *(short *)&JumpBehindCode[0x1e] += (short)size;
-  fwrite(JumpBehindCode, 1, 0x20, dest);
-}
-
-static void write_trailer(FILE *dest, size_t size, int compress_sys_file,
-  exe_header *header)
-{
-  /* UPX trailer */
-  /* hand assembled - so this remains ANSI C ;-) */
-  /* well almost: we still need packing and assume little endian ... */
-  /* move kernel down to place CONFIG-block, which added above,
-     at start_seg-2:0 (e.g. 0x5e:0) instead of 
-     start_seg:0 (e.g. 0x60:0) and store there boot drive number
-     from BL; kernel.asm will then check presence of additional
-     CONFIG-block at this address. */
-  static char trailer[] = {   /* shift down everything by sizeof JumpBehindCode */
-    0xB9, 0x00, 0x00,         /*  0 mov cx,offset trailer     */
-    0x0E,                     /*  3 push cs                   */
-    0x1F,                     /*  4 pop ds (=60)              */
-    0x8C, 0xC8,               /*  5 mov ax,cs                 */
-    0x48,                     /*  7 dec ax                    */
-    0x48,                     /*  8 dec ax                    */
-    0x8E, 0xC0,               /*  9 mov es,ax                 */
-    0x93,                     /* 11 xchg ax,bx (to get al=bl) */
-    0x31, 0xFF,               /* 12 xor di,di                 */
-    0xFC,                     /* 14 cld                       */
-    0xAA,                     /* 15 stosb (store drive number)*/
-    0x8B, 0xF7,               /* 16 mov si,di                 */
-    0xF3, 0xA4,               /* 18 rep movsb                 */
-    0x1E,                     /* 20 push ds                   */
-    0x58,                     /* 21 pop  ax                   */
-    0x05, 0x00, 0x00,         /* 22 add ax,...                */
-    0x8E, 0xD0,               /* 25 mov ss,ax                 */
-    0xBC, 0x00, 0x00,         /* 27 mov sp,...                */
-    0x31, 0xC0,               /* 30 xor ax,ax                 */
-    0xFF, 0xE0                /* 32 jmp ax                    */
-  };
-
-  *(short *)&trailer[1] = (short)size + 0x20;
-  *(short *)&trailer[23] = header->exInitSS;
-  *(short *)&trailer[28] = header->exInitSP;
-  if (compress_sys_file) {
-    /* replace by jmp word ptr [6]: ff 26 06 00
-       (the .SYS strategy handler which will unpack) */
-    *(long *)&trailer[30] = 0x000626ffL;
-    /* set up a 4K stack for the UPX decompressor to work with */
-    *(short *)&trailer[23] = 0x1000;
-    *(short *)&trailer[28] = 0x1000;
+  if (fwrite(code, 1, stubsize, dest) != stubsize) {
+    printf("Error writing header code to output file\n");
+    exit(1);
   }
-  fwrite(trailer, 1, sizeof trailer, dest);
 }
 
 int main(int argc, char **argv)
@@ -355,9 +415,14 @@ int main(int argc, char **argv)
   int i;
   size_t sz, len, len2, n;
   int compress_sys_file;
-  char *buffer, *tmpexe, *cmdbuf;
-  FILE *dest;
-  long size;
+  char *buffer, *tmpexe, *cmdbuf, *entryexefilename = "", *entrydevfilename = "";
+  FILE *dest, *source;
+  size_t size;
+  static unsigned char execode[256 + 10 + 1];
+  static unsigned char devcode[256 + 10 + 1];
+  FILE * entryf = NULL;
+  UWORD end;
+  UWORD stubexesize = 0, stubdevsize = 0;
 
   /* if no arguments provided, show usage and exit */
   if (argc < 4) usage();
@@ -377,6 +442,12 @@ int main(int argc, char **argv)
       case 'U':
         UPX = i;
         break;
+      case 'E':
+        entryexefilename = &argptr[1];
+        break;
+      case 'D':
+        entrydevfilename = &argptr[1];
+        break;
       case 'S':
         if (silentcount >= LENGTH(silentSegments))
         {
@@ -393,22 +464,68 @@ int main(int argc, char **argv)
     }
   }
 
+  if (UPX) {
+    if (*entryexefilename) {
+      entryf = fopen(entryexefilename, "rb");
+      if (!entryf) {
+        printf("Cannot open entry file\n");
+        exit(1);
+      }
+      if (fread(execode, 1, 256 + 10 + 1, entryf) != 256 + 10) {
+        printf("Invalid entry file length\n");
+        exit(1);
+      }
+      end = execode[0x108] + execode[0x108 + 1] * 256U;
+      if (end > 0xC0 || end < 32) {
+        printf("Invalid entry file patch offsets\n");
+        exit(1);
+      }
+      stubexesize = (end + 15U) & ~15U;
+      fclose(entryf);
+      entryf = NULL;
+    }
+    if (*entrydevfilename) {
+      entryf = fopen(entrydevfilename, "rb");
+      if (!entryf) {
+        printf("Cannot open entry file\n");
+        exit(1);
+      }
+      if (fread(devcode, 1, 256 + 10 + 1, entryf) != 256 + 10) {
+        printf("Invalid entry file length\n");
+        exit(1);
+      }
+      end = devcode[0x108] + devcode[0x108 + 1] * 256U;
+      if (end > (0xC0 - 0x10) || end < 32) { /* 0x10 for device header */
+        printf("Invalid entry file patch offsets\n");
+        exit(1);
+      }
+      stubdevsize = (end + 15U) & ~15U;
+      fclose(entryf);
+      entryf = NULL;
+    }
+  }
+
   /* arguments left :
      infile outfile relocation offset */
 
   compress_sys_file = exeflat(argv[1], argv[2], argv[3],
                               silentSegments, silentcount,
-                              UPX, &header);
+                              UPX, stubexesize, stubdevsize, 0, &header);
   if (!UPX)
     exit(0);
 
   /* move kernel.sys tmp.exe */
-  tmpexe = argv[2];
   if (!compress_sys_file)
   {
     tmpexe = "tmp.exe";
-    rename(argv[2], tmpexe);
+  } else {
+    tmpexe = "tmp.sys";
   }
+  if (rename(argv[2], tmpexe))
+  {
+    printf("Can not rename %s to %s\n", argv[2], tmpexe);
+    exit(1);
+  }	
 
   len2 = strlen(tmpexe) + 1;
   sz = len2;
@@ -432,6 +549,7 @@ int main(int argc, char **argv)
   memcpy(cmdbuf + len, tmpexe, len2);
   cmdbuf[len + len2] = '\0';
   printf("%s\n", cmdbuf);
+  fflush(stdout);
   if (system(cmdbuf))
   {
     printf("Problems executing %s\n", cmdbuf);
@@ -443,34 +561,64 @@ int main(int argc, char **argv)
 
   if (!compress_sys_file)
   {
-    exeflat(tmpexe, argv[2], argv[3],
+    exeflat(tmpexe, "tmp.bin", argv[3],
             silentSegments, silentcount,
-            FALSE, &header);
-    remove(tmpexe);
+            FALSE, stubexesize, 0, stubexesize >> 4, &header);
+  } else {
+    UBYTE deviceheader[16];
+    FILE * devfile = fopen("tmp.sys", "rb");
+    if (!devfile) {
+      printf("Source file %s could not be opened\n", "tmp.sys");
+      exit(1);
+    }
+    if (fread(deviceheader, 1, sizeof deviceheader, devfile)
+      != sizeof deviceheader) {
+      printf("Source file %s could not be read\n", "tmp.sys");
+      exit(1);
+    }
+    fclose(devfile);
+    header.exInitIP = deviceheader[6] + deviceheader[7] * 256U;
+    header.exInitCS = 0;
+    rename("tmp.sys", "tmp.bin");
   }
 
-  /* argv[2] now contains the final flattened file: just
-     header and trailer need to be added */
-  /* the compressed file has two chunks max */
+  /* tmp.bin now contains the final flattened file: just
+     the UPX entry header needs to be added. */
+  /* the compressed file may exceed 64 KiB for DOS/EXE format. */
 
-  if ((dest = fopen(argv[2], "rb+")) == NULL)
+  if ((dest = fopen(argv[2], "wb")) == NULL)
   {
     printf("Destination file %s could not be opened\n", argv[2]);
     exit(1);
   }
-
-  buffer = malloc(0xfe01);
-
-  fread(buffer, 0xfe01, 1, dest);
-  size = ftell(dest);
-  if (size >= 0xfe00u)
+  if ((source = fopen("tmp.bin", "rb")) == NULL)
   {
-    printf("kernel; size too large - must be <= 0xfe00\n");
+    printf("Source file %s could not be opened\n", "tmp.bin");
     exit(1);
   }
-  fseek(dest, 0, SEEK_SET);
-  write_header(dest, (size_t)size);
-  fwrite(buffer, (size_t)size, 1, dest);
-  write_trailer(dest, (size_t)size, compress_sys_file, &header);
+
+  buffer = malloc(32 * 1024);
+  if (!buffer)
+  {
+    printf("Memory allocation failure\n");
+    exit(1);
+  }
+
+  write_header(dest,
+    compress_sys_file ? devcode : execode,
+    compress_sys_file ? stubdevsize : stubexesize,
+    argv[3], compress_sys_file, &header);
+
+  do {
+    size = fread(buffer, 1, 32 * 1024, source);
+    if (fwrite(buffer, 1, size, dest) != size) {
+      printf("Write failure\n");
+      exit(1);
+    }
+  } while (size);
+
+  fclose(source);
+  remove("tmp.bin");
+  remove(tmpexe);
   return 0;
 }

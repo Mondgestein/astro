@@ -89,6 +89,7 @@ SECTIONS
     .text 0 : AT (ALIGN(LOADADDR(.data) + SIZEOF(.data), 16)) {
 		*(HMA_TEXT_START)
 		*(HMA_TEXT)
+		_call_intr = CALL_INTR;
 		_res_DosExec = RES_DOSEXEC;
 		_res_read = RES_READ;
 		_strlen = STRLEN;
@@ -113,6 +114,7 @@ SECTIONS
 		_share_close_file = SHARE_CLOSE_FILE;
 		_share_access_check = SHARE_ACCESS_CHECK;
 		_share_lock_unlock = SHARE_LOCK_UNLOCK;
+		_share_is_file_open = SHARE_IS_FILE_OPEN;
 		_call_nls = CALL_NLS;
 		_fl_reset = FL_RESET;
 		_fl_diskchanged = FL_DISKCHANGED;
@@ -146,7 +148,9 @@ SECTIONS
                 _init_memcpy = INIT_MEMCPY;
                 _init_fmemcpy = INIT_FMEMCPY;
                 _init_strcpy = INIT_STRCPY;
+                _init_fstrcpy = INIT_FSTRCPY;
                 _init_strlen = INIT_STRLEN;
+                _init_fstrlen = INIT_FSTRLEN;
                 _init_strchr = INIT_STRCHR;
                 _UMB_get_largest = UMB_GET_LARGEST;
 		_init_call_intr = INIT_CALL_INTR;

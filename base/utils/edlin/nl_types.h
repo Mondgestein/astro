@@ -17,9 +17,7 @@
 #ifndef _NL_TYPES
 #define _NL_TYPES
 
-#if defined(__STDC__) || defined(STDC_HEADERS) || defined(HAVE_STDDEF_H)
 #include <stddef.h>
-#endif
 #ifndef _NL_CATD_DEFINED
 #define _NL_CATD_DEFINED
 typedef size_t nl_catd;

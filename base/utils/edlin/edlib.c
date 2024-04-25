@@ -37,14 +37,13 @@
 #include <process.h>
 #endif
 #include <stdio.h>
-#if defined(STDC_HEADERS) || defined(HAVE_STDLIB_H)
 #include <stdlib.h>
-#endif
-#if defined(STDC_HEADERS) || defined(HAVE_STRING_H)
 #include <string.h>
-#endif
 #ifdef HAVE_STRINGS_H
 #include <strings.h>
+#endif
+#ifdef HAVE_SYS_STAT_H
+#include <sys/stat.h>
 #endif
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>		/* need access */
@@ -72,6 +71,12 @@
 #ifndef F_OK
 #define F_OK 0
 #endif
+#ifndef W_OK
+#define W_OK 2
+#endif
+#ifndef R_OK
+#define R_OK 4
+#endif
 #if defined(HAVE_UNLINK) && defined(HAVE_LINK) && !defined(HAVE_RENAME)
 #define rename(x, y) (link(x,y)?(-1):(unlink(x)))
 #endif
@@ -86,9 +91,8 @@ DAS_ARRAY_T *buffer = 0;
 #ifndef HAVE_STRCHR
 /* no strchr(), so roll our own */
 #ifndef OPTIMIZED_FOR_SIZE
-#ifdef HAVE_LIMITS_H
 #include <limits.h>
-#endif
+
 /* Nonzero if X is not aligned on an "unsigned long" boundary.  */
 #ifdef ALIGN
 #define UNALIGNED(X) ((unsigned long)X&(sizeof(unsigned long)-1))
@@ -207,7 +211,7 @@ kbhit_f (void)
 #endif /* SHIFT_JIS */
 
 /* file_exists - returns whether a file exists or not.  */
-static int
+int
 file_exists (char *filename)
 {
 #ifdef HAVE_ACCESS
@@ -223,6 +227,30 @@ file_exists (char *filename)
     }
   else
     return 0;
+#endif
+}
+
+/* file_is_readonly - returns true iff specified file is read-only.
+   A file is read-only if it is readable but not writable. */
+static int
+file_is_readonly (const char *filename)
+{
+#ifdef HAVE_ACCESS
+  return (access (filename, R_OK) == 0) && (access (filename, W_OK) != 0);
+#elif defined(HAVE_STAT)
+#define IS_READONLY(m)	((m) & 0600) == 0400)
+  struct stat st;
+  int r = stat (filename, &st);
+
+  if (r != 0)
+    return 0;			/* file does not exist or is a bad filename */
+  return (S_ISREG (st.st_mode) && IS_READONLY (st.st_mode));
+#undef IS_READONLY
+#else
+  /* No access() or stat(), have to fake it somehow. There has to be a pure
+     DOS way of handling this with some INT 21H call, and your humble
+     programmer has checked for a portable way of doing this. For now, punt. */
+#error NO WAY TO DETERMINE IF FILE IS READ-ONLY     
 #endif
 }
 
@@ -244,7 +272,10 @@ make_bakfile (char *filename)
   if (dotpos != NPOS)
     DSresize (s, dotpos, 0);
   DSappendcstr (s, bak, NPOS);
-  rename (filename, DScstr (s));
+  if (file_exists (DScstr (s)) && file_is_readonly (DScstr (s)))
+    puts (G00040);
+  else
+    rename (filename, DScstr (s));
   DSdestroy (s);
 }
 
@@ -328,6 +359,7 @@ copy_block (unsigned long line1, unsigned long line2,
 {
   DAS_ARRAY_T *s = DAS_create ();
   size_t numlines = DAS_length (buffer);
+  size_t i;
 
   if (line1 >= numlines || line2 >= numlines || line3 > numlines ||
       (line1 < line3 && line3 <= line2))
@@ -335,7 +367,8 @@ copy_block (unsigned long line1, unsigned long line2,
   else
     {
       DAS_subarray (buffer, s, line1, line2 - line1 + 1);
-      DAS_insert (buffer, line3, DAS_base (s), DAS_length (s), 1);
+      for (i = 0; i < count; ++i)
+	DAS_insert (buffer, line3, DAS_base (s), DAS_length (s), 1);
     }
   DAS_destroy (s);
 }
@@ -440,7 +473,6 @@ read_line (char *prompt)
     }
   while (c != EOF && c != '\n');
 #endif /* SHIFT_JIS */
-//  return DScstr (ds);
   return (c == EOF) ? 0 : DScstr (ds);
 }
 
@@ -584,11 +616,8 @@ insert_block (unsigned long line)
   char *new_line;
   STRING_T *xline;
   if (line > DAS_length (buffer))
-    {
-      puts (G00003);
-      return 0;
-    }
-  while ((new_line = read_line (G00001)) != 0 && strcmp (new_line, ".") != 0)  
+    line = DAS_length (buffer);
+  while ((new_line = read_line (G00001)) != 0 && strcmp (new_line, ".") != 0)
     {
       xline = translate_string (new_line, 0);
       if (DSlength (xline) > 0 && DSget_at (xline, 0) == '\032')
@@ -596,7 +625,7 @@ insert_block (unsigned long line)
       DAS_insert (buffer, line++, xline, 1, 1);
     }
   if (new_line == 0)
-    putchar ('\n');  
+    putchar ('\n');
   return line + 1 < DAS_length (buffer) ? line + 1 : DAS_length (buffer);
 }
 
@@ -704,6 +733,16 @@ replace_buffer (unsigned long current_line,
   DSdestroy (ds);
   DSdestroy (ds1);
   return current_line;
+}
+
+/* Are we really quitting the program? */
+int
+quitting (void)
+{
+  char *yn = 0;
+
+  yn = read_line (G00039);
+  return (yn && strchr (YES, *yn) != 0);
 }
 
 /* get the last line in the buffer */

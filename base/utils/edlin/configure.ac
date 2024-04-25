@@ -1,8 +1,8 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-AC_PREREQ([2.69])
-AC_INIT([edlin], [2.19], [gpietsch@comcast.net])
+AC_PREREQ([2.71])
+AC_INIT([edlin],[2.23],[gpietsch@comcast.net])
 AC_CONFIG_SRCDIR([edlin.c])
 AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE
@@ -14,8 +14,7 @@ AC_PROG_INSTALL
 # Checks for libraries.
 
 # Checks for header files.
-AC_HEADER_STDC
-AC_CHECK_HEADERS([io.h jctype.h limits.h process.h stddef.h])
+AC_CHECK_HEADERS([io.h jctype.h process.h sys/stat.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST
@@ -25,7 +24,7 @@ AC_TYPE_SIZE_T
 AC_FUNC_MALLOC
 AC_FUNC_REALLOC
 AC_FUNC_MEMCMP
-AC_CHECK_FUNCS([access iskanji link memchr memmove memset rename strchr strpbrk strrchr unlink])
+AC_CHECK_FUNCS([access iskanji link memchr memmove memset rename stat strchr strpbrk strrchr unlink])
 
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

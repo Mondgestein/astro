@@ -78,6 +78,8 @@ POST_INSTALL = :
 NORMAL_UNINSTALL = :
 PRE_UNINSTALL = :
 POST_UNINSTALL = :
+build_triplet = @build@
+host_triplet = @host@
 bin_PROGRAMS = edlin$(EXEEXT)
 subdir = .
 DIST_COMMON = INSTALL NEWS README AUTHORS ChangeLog \
@@ -185,7 +187,6 @@ AWK = @AWK@
 CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
-CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
@@ -193,9 +194,7 @@ DEPDIR = @DEPDIR@
 ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
-EGREP = @EGREP@
 EXEEXT = @EXEEXT@
-GREP = @GREP@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -231,14 +230,22 @@ am__quote = @am__quote@
 am__tar = @am__tar@
 am__untar = @am__untar@
 bindir = @bindir@
+build = @build@
 build_alias = @build_alias@
+build_cpu = @build_cpu@
+build_os = @build_os@
+build_vendor = @build_vendor@
 builddir = @builddir@
 datadir = @datadir@
 datarootdir = @datarootdir@
 docdir = @docdir@
 dvidir = @dvidir@
 exec_prefix = @exec_prefix@
+host = @host@
 host_alias = @host_alias@
+host_cpu = @host_cpu@
+host_os = @host_os@
+host_vendor = @host_vendor@
 htmldir = @htmldir@
 includedir = @includedir@
 infodir = @infodir@
@@ -267,13 +274,9 @@ edlin_SOURCES = defines.c defines.h dynarray.h dynstr.c dynstr.h \
                 edlib.c edlib.h edlin.c msgs.h
 
 edlin_MANS = edlin.1.gz
-EXTRA_DIST = config-h.bc Makefile.bc edlin.htm edlin.tgt edlin.wpj \
-	     msgs-da.h msgs-de.h msgs-en.h msgs-eo.h msgs-es.h msgs-eu.h \
-             msgs-fi.h msgs-fr.h msgs-is.h msgs-it.h msgs-la.h msgs-nl.h \
-             msgs-no.h msgs-pl.h msgs-pt.h msgs-sl.h msgs-sv.h msgs-tr.h \
-             msgs-de2.h msgs-ja.h edlin-ja.htm edlin-ja.txt \
-             catgets.c nl_types.h \
-             malloc.c realloc.c kitten msgscats.h config-h.ow \
+EXTRA_DIST = config-h.bc Makefile.bc edlin.html edlin.en edlin.tgt \
+             edlin.wpj msgs-en.h catgets.c nl_types.h \
+             malloc.c realloc.c msgscats.h config-h.ow \
              kit2msgs.c ow.bat
 
 all: config.h

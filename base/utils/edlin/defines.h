@@ -22,9 +22,7 @@
 #ifndef DEFINES_H
 #define DEFINES_H
 
-#if defined(__STDC__) || defined(STDC_HEADERS) || defined(HAVE_STDDEF_H)
 #include <stddef.h>
-#endif
 
 typedef void fvoid_t ();
 

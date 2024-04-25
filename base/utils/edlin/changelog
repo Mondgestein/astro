@@ -1,3 +1,77 @@
+2023-09-27 Gregory Pietsch <gpietsch@comcast.net>
+	* Makefile.am : Added edlin.en to the distribution. This file was
+	  mistakenly left out. Grrr...
+	* configure.ac : Bumped version number to 2.23.
+
+2023-07-18 Gregory Pietsch <gpietsch@comcast.net>
+	* dynstr.c dynstr.h : Added consts to some of the declarations.
+	  This kills a warning from catgets.c.
+
+2023-01-24 Gregory Pietsch <gpietsch@comcast.net>
+	* edlib.c : Added more to the function file_is_readonly.
+
+2023-01-01 Gregory Pietsch <gpietsch@comcast.net>
+	* edlib.c : Added new function file_is_readonly.
+	* edlin.en : Added new message from 2022-12-30 as 1.40.
+	* msgs.h msgs-en.h msgscats.h : Added new message.
+
+2022-12-30 Gregory Pietsch <gpietsch@comcast.net>
+	* edlin.html : New file from Jim Hall, replaces edlin.htm.
+	* edlin.htm : Deleted.
+	* edlib.c : Changed so that it does not make a backup file
+	  on writing when one already exists.  This will be protected by
+	  an "Are you really sure? (Y/N)"-style question when I get around to
+	  writing it. Ahh, the joys of trying to match ancient historical
+	  behavior when there is no documentation of how it should work in the
+	  first place... (Correct behavior is to output a "Warning: backup file
+	  is read-only -- backup will not be made." warning when the backup
+	  file exists and is read-only, and not to make the backup file.)
+	* Makefile.am : Changed edlin.htm to edlin.html.
+	* configure.ac : Bumped version to 2.22.
+	* ow.bat : Bumped version to 2.22.
+
+2022-06-25 Gregory Pietsch <gpietsch@comcast.net>
+	* ow.bat : Changed version to 2.21.
+	* Released version 2.21.
+
+2022-06-19 Gregory Pietsch <gpietsch@comcast.net>
+	* edlib.c (copy_block) : Fixed so that it works correctly.
+	* edlin.c : Fixed defaults for 'C' (copy).
+	* configure.ac : Bumped version to 2.21.
+
+2022-06-04 Gregory Pietsch <gpietsch@comcast.net>
+	* edlib.c (insert_block) : Changed so that a number off the end of
+	  the buffer just appends to the buffer instead of giving an error
+	  message. This matches historical behavior.
+
+2022-05-15 Gregory Pietsch <gpietsch@comcast.net>
+	* edlin.en : Copied out of kitten directory.
+	* kitten/* : Removed. Jerome Shibel's NLS is taking over. 
+	* msgs-*.h : Removed. See above.
+	* edlin-ja.htm edlin-ja.txt : Removed. See above.
+	* edlin.c : Added '#' as a synonym for "$+1".
+	* edlin.en msgs.h msgs-en.h msgscats.h : Added "New file." message.
+	* edlib.c edlib.h (file_exists) : Made non-static and added
+	  prototype to header file.
+	* edlin.c : Added "New file." for new filenames on command line.
+	* catgets.c defines.c defines.h dynstr.c edlib.c nl_types.h : 
+	  Removed obsolete STDC_HEADERS check. The program
+	  should be able to include all C89/C90 Standard C headers 
+	  unconditionally.
+	* edlib.c edlib.h (quitting) : New function to verify quitting.
+	* edlin.c : Calls quitting on the 'q' and 'e' functions to
+	  verify if the user really wants to quit.
+	* edlin.en msgs.h msgs-en.h msgscats.h : 
+	  Added "Abort edit (Y/N)? " message.
+	* configure.ac : Removed obsolete STDC_HEADERS check.
+	* configure.ac : Bumped version to 2.20.
+	* Makefile.am : Removed various items such as kitten directory
+	  and msgs-*.h files. The msgs-en.h and edlin.en files will be
+	  retained as seeds for the NLS.
+	* edlin.htm : Modified to reflect new behaviors.
+	* ow.bat : Bumped version to 2.20.
+	* Version 2.20 released.
+
 2021-03-21 Gregory Pietsch <gpietsch@comcast.net>
 	* edlib.c (read_line) : Fixed so that EOF returns null pointer.
 	* edlib.c (insert_block) : EOF on input now just aborts to command

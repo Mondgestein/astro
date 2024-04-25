@@ -44,6 +44,9 @@
 
 /* commands */
 
+/* does a file exist or not? */
+int file_exists (char *);
+
 /* initialize the buffer */
 void create_buffer (void);
 
@@ -93,6 +96,9 @@ unsigned long insert_block (unsigned long line);
 
 /* get the last line in the buffer */
 unsigned long get_last_line (void);
+
+/* are we really quitting the program? */
+int quitting (void);
 
 #endif
 

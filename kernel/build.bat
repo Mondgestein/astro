@@ -1,4 +1,4 @@
-rem @echo off
+@echo off
 rem batch file to build everything
 rem IF NOTHING COMPILES, CHECK IF YOUR CVS CHECKOUT USES CORRECT DOS LINEBREAKS
 
@@ -51,6 +51,7 @@ if "%1" == "x86"   goto setCPU
 if "%1" == "upx"   set XUPX=upx --8086 --best
 
 if "%1" == "debug" set ALLCFLAGS=%ALLCFLAGS% -DDEBUG
+if "%1" == "lfn"   set ALLCFLAGS=%ALLCFLAGS% -DWITHLFNAPI
 if "%1" == "lfnapi" set ALLCFLAGS=%ALLCFLAGS% -DWITHLFNAPI
 
 if "%1" == "win"   set ALLCFLAGS=%ALLCFLAGS% -DWIN31SUPPORT
@@ -118,6 +119,13 @@ cd ..\kernel
 if errorlevel 1 goto abort-cd
 
 echo.
+echo Process COUNTRY +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+echo.
+cd ..\country
+%MAKE% DIRSEP=\ CP=copy production
+if errorlevel 1 goto abort-cd
+
+echo.
 echo Process SETVER +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 echo.
 cd ..\setver
@@ -162,6 +170,8 @@ if "%1" == "" goto abort
 if "%2" == "/V" goto :setDefineWithValue
 set ALLCFLAGS=%ALLCFLAGS% -D%1
 set NASMFLAGS=%NASMFLAGS% -D%1
+REM $(NASMBOOTFLAGS) are extra flags only used when building boot sectors
+set NASMBOOTFLAGS=%NASMBOOTFLAGS% -d%1
 goto nextOption
 
 :setDefineWithValue

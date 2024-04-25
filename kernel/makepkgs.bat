@@ -48,7 +48,6 @@ MKDIR PACKAGE\BIN
 ECHO using working configuration file
 COPY %BASEPATH%\CONFIG.BAT SOURCE\ke%1\ > NUL
 CD SOURCE\ke%1
-PAUSE
 
 ECHO build and packaging
 SET VERSION=%1 (FAT12/FAT16)
@@ -57,18 +56,15 @@ SET CPU=86
 SET BZKRET=F16
 GOTO BZK
 :F16
-PAUSE
 SET VERSION=%1 (FAT12/FAT16/FAT32)
 SET FAT=32
 SET CPU=386
 SET BZKRET=F32
 GOTO BZK
 :F32
-PAUSE
 ECHO building FreeDOS package
 CD ..\..\PACKAGE
 %ZIPIT% ..\kernel.zip APPINFO BIN DOC SOURCE
-PAUSE
 ECHO clean up
 CD ..
 RMDIR /S /Q SOURCE > NUL
@@ -81,7 +77,7 @@ GOTO DONE
 :BZK
 ECHO build kernel %VERSION%
 CALL build.bat /D KERNEL_VERSION /V "%1 " %CPU% win upx fat%FAT%
-DEL BIN\K??86??.sys
+DEL BIN\K*86??.sys
 SET LSMRET=BZK_2
 SET LSMFILE=docs\fdkernel.lsm
 GOTO LSM
@@ -94,6 +90,7 @@ COPY BIN\KERNEL.SYS ..\..\PACKAGE\BIN\KERNL%CPU%.SYS
 COPY /B /Y BIN\country.sys  ..\..\PACKAGE\BIN\COUNTRY.SYS
 COPY /B /Y BIN\setver.sys  ..\..\PACKAGE\BIN\SETVER.SYS
 COPY /B /Y BIN\sys.com  ..\..\PACKAGE\BIN\SYS.COM
+IF EXIST BIN\share.com COPY /B /Y BIN\share.com  ..\..\PACKAGE\BIN\SHARE.COM
 ECHO cleaning up between builds
 CALL clobber.bat
 GOTO %BZKRET%

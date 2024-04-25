@@ -62,6 +62,8 @@ STATIC struct MenuSelector MenuStruct[MENULINESMAX] BSS_INIT({0});
 
 int nMenuLine BSS_INIT(0);
 int MenuColor = -1;
+extern char kernel_command_line[256];
+extern int kernel_command_line_length;
 
 STATIC void WriteMenuLine(struct MenuSelector *menu)
 {
@@ -125,8 +127,7 @@ size_t ebda_size BSS_INIT(0);
 
 static UBYTE ErrorAlreadyPrinted[128] BSS_INIT({0});
 
-char master_env[128] BSS_INIT({0});
-static char *envp = master_env;
+static char FAR *envp = master_env;
 
 struct config Config = {
   0,
@@ -212,7 +213,7 @@ STATIC VOID DoMenu(void);
 STATIC VOID CfgMenuDefault(BYTE * pLine);
 STATIC BYTE * skipwh(BYTE * s);
 STATIC int iswh(unsigned char c);
-STATIC BYTE * scan(BYTE * s, BYTE * d);
+STATIC BYTE * scan(BYTE * s, BYTE * d, int fMenuSelect);
 STATIC BOOL isnum(char ch);
 #if 0
 STATIC COUNT tolower(COUNT c);
@@ -800,6 +801,26 @@ copy_char:
 #endif
 
 
+static unsigned check_config_commandline(char ** pointer, char * cc,
+	char const * commandbuffer, char const * command);
+static unsigned check_config_commandline(char ** pointer, char * cc,
+	char const * commandbuffer, char const * command) {
+  unsigned length = strlen(command);
+  if (memcmp(commandbuffer, command, length) == 0
+      && (commandbuffer[length] == '\t'
+          || commandbuffer[length] == ' '
+          || commandbuffer[length] == '='
+          || commandbuffer[length] == 0)) {
+    for (cc += length; *cc == '\t' || *cc == ' '; ++cc);
+    if (*cc == '=') ++cc;
+    for (; *cc == '\t' || *cc == ' '; ++cc);
+    *pointer = cc;
+    return 1;
+  }
+  return 0;
+}
+
+
 VOID DoConfig(int nPass)
 {
   BYTE *pLine;
@@ -838,20 +859,46 @@ VOID DoConfig(int nPass)
 #endif
   }
 
+  {
+    char * pp = kernel_command_line;
+    char * cc;
+    unsigned ii;
+    static char commandbuffer[256];
+    char * end = &kernel_command_line[kernel_command_line_length];
+    static char * configfile = "";
+    static char * altconfigfile = "fdconfig.sys";
+    static char * oldconfigfile = "config.sys";
+    static struct { char ** pointer; char const * command; }
+      configcommands[] = {
+        { &configfile, "CONFIG" },
+        { &altconfigfile, "ALTCONFIG" },
+        { &oldconfigfile, "OLDCONFIG" },
+        { NULL, NULL }
+        };
+    for (; pp < end; pp += strlen(pp) + 1) {
+      for (cc = pp; *cc == '\t' || *cc == ' '; ++cc);
+      strcpy(commandbuffer, cc);
+      strupr(commandbuffer);
+      for (ii = 0; configcommands[ii].pointer != NULL; ++ii)
+        if (check_config_commandline(configcommands[ii].pointer,
+          cc, commandbuffer, configcommands[ii].command))
+          break;
+    }
 
-  /* Check to see if we have a config.sys file.  If not, just     */
-  /* exit since we don't force the user to have one (but 1st      */
-  /* also process MEMDISK passed config options if present).      */
-  if ((nFileDesc = open("fdconfig.sys", 0)) >= 0)
-  {
-    DebugPrintf(("Reading FDCONFIG.SYS...\n"));
-  }
-  else
-  {
-    DebugPrintf(("FDCONFIG.SYS not found\n"));
-    if ((nFileDesc = open("config.sys", 0)) < 0)
-    {
-      DebugPrintf(("CONFIG.SYS not found\n"));
+    /* Check to see if we have a config.sys file.  If not, just     */
+    /* exit since we don't force the user to have one (but 1st      */
+    /* also process MEMDISK passed config options if present).      */
+    for (ii = 0; configcommands[ii].pointer != NULL; ++ii) {
+      if (**configcommands[ii].pointer != '\0') {
+        if ((nFileDesc = open(*configcommands[ii].pointer, 0)) >= 0) {
+          DebugPrintf(("Reading \"%s\"...\n", *configcommands[ii].pointer));
+          break;
+        } else {
+          DebugPrintf(("\"%s\" not found\n", *configcommands[ii].pointer));
+        }
+      }
+    }
+    if (configcommands[ii].pointer == NULL) {
       /* at this point no config file was found, may return early */
 #ifdef MEMDISK_ARGS
       /* if memdisk in use then only assume end of file reached and proceed, else return early */
@@ -860,10 +907,6 @@ VOID DoConfig(int nPass)
       else
 #endif
         return;
-    }
-    else
-    {
-      DebugPrintf(("Reading CONFIG.SYS...\n"));
     }
   }
 
@@ -935,7 +978,7 @@ VOID DoConfig(int nPass)
     DebugPrintf(("CONFIG=[%s]\n", szLine));
 
     /* Skip leading white space and get verb.               */
-    pLine = scan(szLine, szBuf);
+    pLine = scan(szLine, szBuf, 1);
 
     /* If the line was blank, skip it.  Otherwise, look up  */
     /* the verb and execute the appropriate function.       */
@@ -1166,11 +1209,8 @@ STATIC char *GetNumArg(char *p, int *num)
 
 BYTE *GetStringArg(BYTE * pLine, BYTE * pszString)
 {
-  /* look for STRING                               */
-  pLine = skipwh(pLine);
-
   /* just return whatever string is there, including null         */
-  return scan(pLine, pszString);
+  return scan(pLine, pszString, 0);
 }
 
 STATIC void Config_Buffers(BYTE * pLine)
@@ -1185,7 +1225,7 @@ STATIC void Config_Buffers(BYTE * pLine)
 STATIC void CfgBuffersHigh(BYTE * pLine)
 {
   Config_Buffers(pLine);
-  printf("Note: BUFFERS will be in HMA or low RAM, not in UMB\n");
+  if (InitKernelConfig.Verbose >= 0) printf("Note: BUFFERS will be in HMA or low RAM, not in UMB\n");
 }
 
 /**
@@ -1236,7 +1276,7 @@ STATIC VOID sysVersion(BYTE * pLine)
   if (GetNumArg(p, &minor) == (BYTE *) 0)
     return;
 
-  printf("Changing reported version to %d.%d\n", major, minor);
+  if (InitKernelConfig.Verbose >= 0) printf("Changing reported version to %d.%d\n", major, minor);
 
   LoL->os_setver_major = major; /* not the internal os_major */
   LoL->os_setver_minor = minor; /* not the internal os_minor */
@@ -1297,14 +1337,17 @@ STATIC VOID Dosmem(BYTE * pLine)
   BYTE *pTmp;
   BYTE UMBwanted = FALSE;
 
-  pLine = GetStringArg(pLine, szBuf);
-
+  GetStringArg(pLine, szBuf);
+  strcpy(szBuf, pLine);
   strupr(szBuf);
 
   /* printf("DOS called with %s\n", szBuf); */
 
   for (pTmp = szBuf;;)
   {
+    while (*pTmp == ' ' || *pTmp == '\t')
+      pTmp++;
+
     if (memcmp(pTmp, "UMB", 3) == 0)
     {
       UMBwanted = TRUE;
@@ -1315,11 +1358,26 @@ STATIC VOID Dosmem(BYTE * pLine)
       HMAState = HMA_REQ;
       pTmp += 4;
     }
+    if (memcmp(pTmp, "LOW", 3) == 0)
+    {
+      HMAState = HMA_LOW;
+      pTmp += 3;
+    }
+    if (memcmp(pTmp, "NOUMB", 5) == 0)
+    {
+      UMBwanted = FALSE;
+      pTmp += 5;
+    }
 /*        if (memcmp(pTmp, "CLAIMINIT",9) == 0) { INITDataSegmentClaimed = 0; pTmp += 9; }*/
     pTmp = skipwh(pTmp);
 
-    if (*pTmp != ',')
+    if (*pTmp == '\0')
       break;
+    if (*pTmp != ',')
+    {
+      CfgFailure(pLine + (pTmp - szBuf));
+      break;
+    }
     pTmp++;
   }
 
@@ -1560,7 +1618,7 @@ err:printf("%s has invalid format\n", filename);
     if (lseek(fd, entry.offset) == 0xffffffffL
       || read(fd, &count, sizeof(count)) != sizeof(count)
       || count > LENGTH(hdr)
-      || read(fd, &hdr, sizeof(struct subf_hdr) * count)
+      || read(fd, hdr, sizeof(struct subf_hdr) * count)
                       != sizeof(struct subf_hdr) * count)
       goto err;
     for (i = 0; i < count; i++)
@@ -1972,7 +2030,7 @@ STATIC BYTE * skipwh(BYTE * s)
   return s;
 }
 
-STATIC BYTE * scan(BYTE * s, BYTE * d)
+STATIC BYTE * scan(BYTE * s, BYTE * d, int fMenuSelect)
 {
   askThisSingleCommand = FALSE;
   DontAskThisSingleCommand = FALSE;
@@ -1981,9 +2039,12 @@ STATIC BYTE * scan(BYTE * s, BYTE * d)
 
   MenuLine = 0;
 
+  /* only check at beginning of line, ie when looking for
+     menu selection line applies to.  Fixes issue where
+	 value after = starts with number, eg shell=4dos */
   /* does the line start with "123?" */
 
-  if (isnum(*s))
+  if (fMenuSelect && isnum(*s))
   {
     unsigned numbers = 0;
     for ( ; isnum(*s); s++)
@@ -2165,8 +2226,11 @@ STATIC void config_init_buffers(int wantedbuffers)
   if (FP_SEG(pbuffer) == 0xffff)
   {
     buffers++;
-    printf("Kernel: allocated %d Diskbuffers = %u Bytes in HMA\n",
+    if (InitKernelConfig.Verbose >= 0) 
+    {
+      printf("Kernel: allocated %d Diskbuffers = %u Bytes in HMA\n",
            buffers, buffers * sizeof(struct buffer));
+    }
   }
 }
 
@@ -2357,8 +2421,17 @@ RestartInput:
   printf("\n");
 
   /* export the current selected config  menu */
-  sprintf(envp, "CONFIG=%c", MenuSelected+'0');
-  envp += 9;
+  {
+    char buffer[10];
+    int len;
+    sprintf(buffer, "CONFIG=%c", MenuSelected+'0');
+    len = strlen(buffer);
+    fstrcpy(envp, buffer);
+    envp += len + 1;
+    *envp = 0;
+    envp[1] = 0;
+    envp[2] = 0;
+  }
   if (MenuColor != -1)
     ClearScreen(0x7);
 }
@@ -2468,62 +2541,8 @@ struct CountrySpecificInfoSmall {
 };
 
 struct CountrySpecificInfoSmall specificCountriesSupported[] = {
-
-/* table rewritten by Bernd Blaauw
-Country ID  : international numbering
-Date format : M = Month, D = Day, Y = Year (4digit); 0=USA, 1=Europe, 2=Japan
-Currency    : $ = dollar, EUR = EURO, United Kingdom uses the pound sign
-Thousands   : separator for thousands (1,000,000 bytes; Dutch: 1.000.000 bytes)
-Decimals    : separator for decimals (2.5KB; Dutch: 2,5KB)
-Datesep     : Date separator (2/4/2004 or 2-4-2004 for example)
-Timesep     : usually ":" is used to separate hours, minutes and seconds
-Currencyf   : Currency format (bit array)
-Currencyp   : Currency precision
-Timeformat  : 0=12 hour format (AM/PM), 1=24 hour format (16:12 means 4:12 PM)
-
-  ID  Date     currency  1000 0.1 date time C digit time       Locale/Country
------------------------------------------------------------------------------*/
-{  1,_DATE_MDY,"$"       ,',','.', '/',':', 0 , 2,_TIME_12},/* United States */
-{  2,_DATE_YMD,"$"       ,',','.', '-',':', 0 , 2,_TIME_24},/* Canada French */
-{  3,_DATE_MDY,"$"       ,',','.', '/',':', 0 , 2,_TIME_12},/* Latin America */
-{  7,_DATE_DMY,"RUB"     ,' ',',', '.',':', 3 , 2,_TIME_24},/* Russia        */
-{ 31,_DATE_DMY,"EUR"     ,'.',',', '-',':', 0 , 2,_TIME_24},/* Netherlands   */
-{ 32,_DATE_DMY,"EUR"     ,'.',',', '-',':', 0 , 2,_TIME_24},/* Belgium       */
-{ 33,_DATE_DMY,"EUR"     ,'.',',', '-',':', 0 , 2,_TIME_24},/* France        */
-{ 34,_DATE_DMY,"EUR"     ,'.','\'','-',':', 0 , 2,_TIME_24},/* Spain         */
-{ 36,_DATE_DMY,"$HU"     ,'.',',', '-',':', 0 , 2,_TIME_24},/* Hungary       */
-{ 38,_DATE_DMY,"$YU"     ,'.',',', '-',':', 0 , 2,_TIME_24},/* Yugoslavia    */
-{ 39,_DATE_DMY,"EUR"     ,'.',',', '-',':', 0 , 2,_TIME_24},/* Italy         */
-{ 41,_DATE_DMY,"SF"      ,'.',',', '.',':', 0 , 2,_TIME_24},/* Switserland   */
-{ 42,_DATE_YMD,"$YU"     ,'.',',', '.',':', 0 , 2,_TIME_24},/* Czech/Slovakia*/
-{ 44,_DATE_DMY,"\x9c"    ,'.',',', '/',':', 0 , 2,_TIME_24},/* United Kingdom*/
-{ 45,_DATE_DMY,"DKK"     ,'.',',', '-',':', 0 , 2,_TIME_24},/* Denmark       */
-{ 46,_DATE_YMD,"SEK"     ,',','.', '-',':', 0 , 2,_TIME_24},/* Sweden        */
-{ 47,_DATE_DMY,"NOK"     ,',','.', '.',':', 0 , 2,_TIME_24},/* Norway        */
-{ 48,_DATE_YMD,"PLN"     ,',','.', '.',':', 0 , 2,_TIME_24},/* Poland        */
-{ 49,_DATE_DMY,"EUR"     ,'.',',', '.',':', 1 , 2,_TIME_24},/* Germany       */
-{ 54,_DATE_DMY,"$ar"     ,'.',',', '/',':', 1 , 2,_TIME_12},/* Argentina     */
-{ 55,_DATE_DMY,"$ar"     ,'.',',', '/',':', 1 , 2,_TIME_24},/* Brazil        */
-{ 61,_DATE_MDY,"$"       ,'.',',', '/',':', 0 , 2,_TIME_24},/* Int. English  */
-{ 81,_DATE_YMD,"\x81\x8f",',','.', '/',':', 0 , 2,_TIME_12},/* Japan         */
-{351,_DATE_DMY,"EUR"     ,'.',',', '-',':', 0 , 2,_TIME_24},/* Portugal      */
-{358,_DATE_DMY,"EUR"     ,' ',',', '.',':',0x3, 2,_TIME_24},/* Finland       */
-{359,_DATE_DMY,"BGL"     ,' ',',', '.',':', 3 , 2,_TIME_24},/* Bulgaria      */
-{380,_DATE_DMY,"UAH"     ,' ',',', '.',':', 3 , 2,_TIME_24},/* Ukraine       */
+#include "../country/kernel.tb1"
 };
-
-/* contributors to above table:
-
-	tom ehlert (GER)
-	bart oldeman (NL)
-	wolf (FIN)
-	Michael H.Tyc (POL)
-	Oleg Deribas (UKR)
-	Arkady Belousov (RUS)
-        Luchezar Georgiev (BUL)
-	Yuki Mitsui (JAP)
-	Aitor Santamaria Merino (SP)
-*/
 
 STATIC int LoadCountryInfoHardCoded(COUNT ctryCode)
 {
@@ -2726,22 +2745,64 @@ VOID DoInstall(void)
   return;
 }
 
+STATIC BYTE far * searchvar(const BYTE * name, int length)
+{
+  BYTE far * pp = master_env;
+  do {
+    if (!fmemcmp(name, pp, length + 1)) {
+      return pp;
+    }
+    pp += fstrlen(pp) + 1;
+  } while (*pp);
+  return NULL;
+}
+
+STATIC void deletevar(BYTE far * pp) {
+  int variablelength;
+  if (NULL == pp)
+    return;
+  variablelength = fstrlen(pp) + 1;
+  fmemcpy(pp, pp + variablelength, envp + 3 - (pp + variablelength));
+  /* our fmemcpy always copies forwards */
+  envp -= variablelength;
+  return;
+}
+
 STATIC VOID CmdSet(BYTE *pLine)
 {
   pLine = GetStringArg(pLine, szBuf);
   pLine = skipwh(pLine);  /* scan() stops at the equal sign or space */
   if (*pLine == '=')      /* equal sign is required */
   {
-    int size;
+    int size, oldsize, namesize;
+    BYTE far * pp;
     strupr(szBuf);        /* all environment variables must be uppercase */
+    namesize = strlen(szBuf);
     strcat(szBuf, "=");
+    pp = searchvar(szBuf, namesize);
     pLine = skipwh(++pLine);
     strcat(szBuf, pLine); /* append the variable value (may include spaces) */
     size = strlen(szBuf);
-    if (size < master_env + sizeof(master_env) - envp - 1)
+    if (size == namesize + 1) {
+      /* empty variable ?  then just delete. (cannot fail) */
+      deletevar(pp);
+      return;
+    }
+    if (pp) {
+      oldsize = fstrlen(pp) + 1;
+    } else {
+      oldsize = 0;
+    }
+    if (size < master_env + sizeof(master_env) - (envp - oldsize) - 1 - 2)
     {                     /* must end with two consequtive zeros */
-      strcpy(envp, szBuf);
+      deletevar(pp);      /* now that there's enough space, actually delete */
+      fstrcpy(envp, szBuf);
       envp += size + 1;   /* add next variables starting at the second zero */
+      *envp = 0;
+      envp[1] = 0;
+      envp[2] = 0;
+      /* The word marker after last variable should not equal 1,
+          to indicate that there is no executable pathname following.  */
     }
     else
       printf("Master environment is full - can't add \"%s\"\n", szBuf);

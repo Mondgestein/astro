@@ -218,9 +218,11 @@ void FcbCloseAll(void);
 UBYTE FcbFindFirstNext(xfcb FAR * lpXfcb, BOOL First);
 
 /* intr.asm */
+UWORD ASMPASCAL call_intr(WORD nr, iregs FAR * rp);
 COUNT ASMPASCAL res_DosExec(COUNT mode, exec_blk * ep, BYTE * lp);
 UCOUNT ASMPASCAL res_read(int fd, void *buf, UCOUNT count);
 #ifdef __WATCOMC__
+#pragma aux (pascal) call_intr modify exact [ax]
 #pragma aux (pascal) res_DosExec modify exact [ax bx dx es]
 #pragma aux (pascal) res_read modify exact [ax bx cx dx]
 #endif
@@ -248,7 +250,7 @@ VOID mcb_print(mcb FAR * mcbp);
 COUNT lfn_allocate_inode(VOID);
 COUNT lfn_free_inode(COUNT handle);
 
-COUNT lfn_setup_inode(COUNT handle, ULONG dirstart, UWORD diroff);
+COUNT lfn_setup_inode(COUNT handle, ULONG dirstart, ULONG diroff);
 
 COUNT lfn_create_entries(COUNT handle, lfn_inode_ptr lip);
 COUNT lfn_remove_entries(COUNT handle);
@@ -375,6 +377,7 @@ int network_redirector_fp(unsigned cmd, void far *s);
 long ASMPASCAL network_redirector_mx(unsigned cmd, void far *s, void *arg);
 #define remote_rw(cmd,s,arg) network_redirector_mx(cmd, s, (void *)arg)
 #define remote_getfree(s,d) (int)network_redirector_mx(REM_GETSPACE, s, d)
+#define remote_getfree_11a3(s,d) (int)network_redirector_mx(REM_GETLARGESPACE, s, d)
 #define remote_lseek(s,new_pos) network_redirector_mx(REM_LSEEK, s, &new_pos)
 #define remote_setfattr(attr) (int)network_redirector_mx(REM_SETATTR, NULL, (void *)attr)
 #define remote_printredir(dx,ax) (int)network_redirector_mx(REM_PRINTREDIR, MK_FP(0,dx),(void *)ax)

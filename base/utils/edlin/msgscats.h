@@ -61,6 +61,9 @@
 #define G00035  catgets(the_cat, 1, 35, "Buffer too big")
 #define G00036  catgets(the_cat, 1, 36, "Invalid buffer position")
 #define G00037  catgets(the_cat, 1, 37, "ERROR: %s\n")
+#define G00038	catgets(the_cat, 1, 38, "New file.")
+#define G00039	catgets(the_cat, 1, 39, "Abort edit (Y/N)? ")
+#define G00040  catgets(the_cat, 1, 40, "WARNING: Backup file is read-only -- backup will not be made.")
 
 #ifndef EXTERN
 #define EXTERN extern

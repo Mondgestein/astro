@@ -46,7 +46,7 @@ BYTE share_installed = 0;
            code, so DOS simply negates this value and returns it in
            AX. */
 extern int ASMPASCAL
-           share_open_check(char * filename,            /* pointer to fully qualified filename */
+           share_open_check(const char FAR * filename,  /* pointer to fully qualified filename */
                             unsigned short pspseg,      /* psp segment address of owner process */
                             int openmode,       /* 0=read-only, 1=write-only, 2=read-write */
                             int sharemode);     /* SHARE_COMPAT, etc... */
@@ -85,6 +85,13 @@ extern int ASMPASCAL
                              unsigned long ofs, /* offset into file */
                              unsigned long len, /* length (in bytes) of region to lock or unlock */
                              int unlock);       /* one to unlock; zero to lock */
+
+        /* DOS calls this to see if share already has the file marked as open.
+           Returns:
+             1 if open
+             0 if not */
+extern int ASMPASCAL
+            share_is_file_open(const char far * filename);
 
 /* /// End of additions for SHARE.  - Ron Cemer */
 
@@ -306,7 +313,7 @@ long DosRWSft(int sft_idx, size_t n, void FAR * bp, int mode)
   return rwblock(sft_idx, bp, n, mode);
 }
 
-COUNT SftSeek(int sft_idx, LONG new_pos, unsigned mode)
+COUNT SftSeek2(int sft_idx, LONG new_pos, unsigned mode, UDWORD * p_result)
 {
   sft FAR *s = idx_to_sft(sft_idx);
   if (FP_OFF(s) == (size_t) -1)
@@ -347,17 +354,25 @@ COUNT SftSeek(int sft_idx, LONG new_pos, unsigned mode)
   }
 
   s->sft_posit = new_pos;
+  *p_result = new_pos;
   return SUCCESS;
+}
+
+COUNT SftSeek(int sft_idx, LONG new_pos, unsigned mode)
+{
+  UDWORD result;
+  return SftSeek2(sft_idx, new_pos, mode, &result);
 }
 
 ULONG DosSeek(unsigned hndl, LONG new_pos, COUNT mode, int *rc)
 {
   int sft_idx = get_sft_idx(hndl);
+  UDWORD result;
 
   /* Get the SFT block that contains the SFT      */
-  *rc = SftSeek(sft_idx, new_pos, mode);
+  *rc = SftSeek2(sft_idx, new_pos, mode, &result);
   if (*rc == SUCCESS)
-    return idx_to_sft(sft_idx)->sft_posit;
+    return result;
   return *rc;
 }
 
@@ -756,7 +771,7 @@ UWORD DosGetFree(UBYTE drive, UWORD * navc, UWORD * bps, UWORD * nc)
   /* navc==NULL means: called from FatGetDrvData, fcbfns.c */
   struct dpb FAR *dpbp;
   struct cds FAR *cdsp;
-  COUNT rg[4];
+  COUNT rg[5];  /* add space for SI, although it's unused here */
   UWORD spc;
 
   /* first check for valid drive          */
@@ -861,7 +876,7 @@ COUNT DosGetExtFree(BYTE FAR * DriveString, struct xfreespace FAR * xfsp)
 {
   struct dpb FAR *dpbp;
   struct cds FAR *cdsp;
-  UCOUNT rg[4];
+  UCOUNT rg[5];
 
   /* ensure all fields known value - clear reserved bytes & set xfs_version.actual to 0 */
   fmemset(xfsp, 0, sizeof(struct xfreespace));
@@ -884,13 +899,44 @@ COUNT DosGetExtFree(BYTE FAR * DriveString, struct xfreespace FAR * xfsp)
 
   if (cdsp->cdsFlags & CDSNETWDRV)
   {
-    if (remote_getfree(cdsp, rg) != SUCCESS)
-      return DE_INVLDDRV;
+    /* Try redirector extension */
+    if (remote_getfree_11a3(cdsp, rg) != SUCCESS)
+    {
+      /* Fallback */
+      if (remote_getfree(cdsp, rg) != SUCCESS)
+        return DE_INVLDDRV;
 
-    xfsp->xfs_clussize = rg[0];
-    xfsp->xfs_totalclusters = rg[1];
-    xfsp->xfs_secsize = rg[2];
-    xfsp->xfs_freeclusters = rg[3];
+      xfsp->xfs_clussize = rg[0];
+      xfsp->xfs_totalclusters = rg[1];
+      xfsp->xfs_secsize = rg[2];
+      xfsp->xfs_freeclusters = rg[3];
+    }
+    else /* Supports extension */
+    {
+      UDWORD total, avail;
+      UDWORD bps, spc;
+
+      bps = rg[4];
+      spc = 1;
+      total = (((UDWORD)rg[0] << 16UL) | rg[1]);
+      avail = (((UDWORD)rg[2] << 16UL) | rg[3]);
+
+      while (total > 0x00ffffff && spc < 128) {
+        spc *= 2;
+        avail /= 2;
+        total /= 2;
+      }
+      while (total > 0x00ffffff && bps < 32768) {
+        bps *= 2;
+        avail /= 2;
+        total /= 2;
+      }
+
+      xfsp->xfs_secsize = bps;
+      xfsp->xfs_clussize = spc;
+      xfsp->xfs_totalclusters = total;
+      xfsp->xfs_freeclusters = avail;
+    }
   }
   else
   {
@@ -1206,6 +1252,9 @@ COUNT DosDelete(BYTE FAR * path, int attrib)
   if (result & IS_DEVICE)
     return DE_FILENOTFND;
 
+  if (IsShareInstalled(TRUE) && share_is_file_open(PriPathName))
+    return DE_ACCESS;
+
   return dos_delete(PriPathName, attrib);
 }
 
@@ -1217,6 +1266,9 @@ COUNT DosRenameTrue(BYTE * path1, BYTE * path2, int attrib)
   }
   if (FP_OFF(current_ldt) == 0xFFFF || (current_ldt->cdsFlags & CDSNETWDRV))
     return network_redirector(REM_RENAME);
+
+  if (IsShareInstalled(TRUE) && share_is_file_open(path1))
+    return DE_ACCESS;
 
   return dos_rename(path1, path2, attrib);
 }
@@ -1374,8 +1426,10 @@ BOOL IsShareInstalled(BOOL recheck)
   extern unsigned char ASMPASCAL share_check(void);
   if (recheck == FALSE)
     return share_installed;
-  if (!share_installed && share_check() == 0xff)
+  if (share_check() == 0xff)
     share_installed = TRUE;
+  else
+    share_installed = FALSE;
   return share_installed;
 }
 

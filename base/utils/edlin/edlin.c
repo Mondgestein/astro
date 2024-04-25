@@ -34,7 +34,7 @@
 #include <stdlib.h>
 #include "dynstr.h"
 #include "edlib.h"
-#define EXTERN                  /* force a declaration */
+#define EXTERN			/* force a declaration */
 #include "msgs.h"
 #ifdef USE_CATGETS
 #include "nl_types.h"
@@ -93,53 +93,64 @@ parse_command (char *s)
     {
       /* parse the digits */
       if (*ip == '.')
-        {
-          if (acc)
-            {
-              /* Error: Invalid user input */
-              fprintf (stderr, G00037, G00033);
-              return;
-            }
-          acc = current_line;
-          ip++;
-        }
+	{
+	  if (acc)
+	    {
+	      /* Error: Invalid user input */
+	      fprintf (stderr, G00037, G00033);
+	      return;
+	    }
+	  acc = current_line;
+	  ip++;
+	}
       else if (*ip == '$')
-        {
-          if (acc)
-            {
-              /* Error: Invalid user input */
-              fprintf (stderr, G00037, G00033);
-              return;
-            }
-          acc = get_last_line ();
-          ip++;
-        }
+	{
+	  if (acc)
+	    {
+	      /* Error: Invalid user input */
+	      fprintf (stderr, G00037, G00033);
+	      return;
+	    }
+	  acc = get_last_line ();
+	  ip++;
+	}
+      else if (*ip == '#')
+	{
+	  if (acc)
+	    {
+	      /* Error: Invalid user input */
+	      fprintf (stderr, G00037, G00033);
+	      return;
+	    }
+	  acc = get_last_line () + 1;
+	  ip++;
+	}
       else
-        while (isdigit (*ip))
-          acc = acc * 10 + (*ip++ - '0');
+	while (isdigit (*ip))
+	  acc = acc * 10 + (*ip++ - '0');
       if (lpip >= 4)
-        {
-          /* Error: Invalid user input */
-          fprintf (stderr, G00037, G00033);
-          return;
-        }
+	{
+	  /* Error: Invalid user input */
+	  fprintf (stderr, G00037, G00033);
+	  return;
+	}
       lp[lpip] += (op == '+') ? acc : -acc;
       acc = 0;
       if (*ip == '+' || *ip == '-')
-        op = *ip++;
+	op = *ip++;
       else if (*ip == ',')
-        {
-          lpip++;
-          ip++;
-          op = '+';
-        }
+	{
+	  lpip++;
+	  ip++;
+	  op = '+';
+	}
       else if (*ip && !(isalpha ((unsigned char) *ip)
-                        || (*ip == '?' && isalpha ((unsigned char) ip[1]))))
-        {
-          /* Error: Invalid user input */
-          fprintf (stderr, G00037, G00033);
-          return;
-        }
+			|| (*ip == '?' && isalpha ((unsigned char) ip[1]))))
+	{
+	  /* Error: Invalid user input */
+	  fprintf (stderr, G00037, G00033);
+	  return;
+	}
     }
   if (*ip == '?')
     {
@@ -149,111 +160,113 @@ parse_command (char *s)
   /* at this point, *ip should be pointing to '\0' or the command character */
   switch (tolower ((unsigned char) (*ip)))
     {
-    case '\0':                  /* amend a single line or show help */
+    case '\0':			/* amend a single line or show help */
       if (lp[0] == 0 && verifying)
-        help ();
+	help ();
       else if (lp[0])
-        {
-          current_line = lp[0];
-          modify_line (current_line - 1);
-        }
+	{
+	  current_line = lp[0];
+	  modify_line (current_line - 1);
+	}
       else
-        {
-          /* Error: Invalid user input */
-          fprintf (stderr, G00037, G00033);
-          return;
-        }
+	{
+	  /* Error: Invalid user input */
+	  fprintf (stderr, G00037, G00033);
+	  return;
+	}
       break;
-    case 'c':                   /* copy */
-      if (lp[0] == 0 || lp[1] == 0)
-        lp[0] = lp[1] = current_line;
+    case 'c':			/* copy */
+      if (lp[0] == 0)
+	lp[0] = current_line;
+      if (lp[1] == 0)
+	lp[1] = current_line;
       if (lp[2] == 0)
-        {
-          /* Error: Invalid user input */
-          fprintf (stderr, G00037, G00033);
-          return;
-        }
+	{
+	  /* Error: Invalid user input */
+	  fprintf (stderr, G00037, G00033);
+	  return;
+	}
       if (lp[3] == 0)
-        lp[3] = 1;
+	lp[3] = 1;
       copy_block (lp[0] - 1, lp[1] - 1, lp[2] - 1, (size_t) lp[3]);
       break;
-    case 'd':                   /* delete */
+    case 'd':			/* delete */
       if (lp[1] == 0)
-        lp[1] = (lp[0]) ? lp[0] : current_line;
+	lp[1] = (lp[0]) ? lp[0] : current_line;
       if (lp[0] == 0)
-        lp[0] = current_line;
+	lp[0] = current_line;
       delete_block (lp[0] - 1, lp[1] - 1);
       break;
-    case 'm':                   /* move */
+    case 'm':			/* move */
       if (lp[0] == 0)
-        lp[0] = current_line;
+	lp[0] = current_line;
       if (lp[1] == 0 || lp[2] == 0)
-        {
-          /* invalid parameters */
-          /* Error: Invalid user input */
-          fprintf (stderr, G00037, G00033);
-          return;
-        }
+	{
+	  /* invalid parameters */
+	  /* Error: Invalid user input */
+	  fprintf (stderr, G00037, G00033);
+	  return;
+	}
       move_block (lp[0] - 1, lp[1] - 1, lp[2] - 1);
       break;
-    case 'l':                   /* list */
-    case 'p':                   /* print */
+    case 'l':			/* list */
+    case 'p':			/* print */
       if (lp[0] == 0)
-        {
-          lp[0] = (*ip == 'l')
-            ? MAX (current_line - (int) (page_size >> 1), 1) : current_line;
-        }
+	{
+	  lp[0] = (*ip == 'l')
+	    ? MAX (current_line - (int) (page_size >> 1), 1) : current_line;
+	}
       if (lp[1] == 0)
-        lp[1] = lp[0] + page_size - 1;
+	lp[1] = lp[0] + page_size - 1;
       display_block (lp[0] - 1, lp[1] - 1, current_line - 1, page_size);
       break;
-    case 'q':                   /* quit */
-      exiting = 1;
+    case 'q':			/* quit */
+      exiting = quitting ();
       break;
-    case 't':                   /* transfer file */
+    case 't':			/* transfer file */
       if (lp[0] == 0)
-        lp[0] = current_line;
+	lp[0] = current_line;
       ip++;
       while (*ip && isspace (*ip))
-        ip++;
+	ip++;
       transfer_file (lp[0] - 1, ip);
       current_line = lp[0];
       break;
-    case 'e':                   /* write & exit */
-    case 'w':                   /* write file */
-      exiting = (*ip == 'e');
+    case 'e':			/* write & exit */
+    case 'w':			/* write file */
+      exiting = (*ip == 'e') && quitting ();
       ip++;
       while (*ip && isspace (*ip))
-        ip++;
+	ip++;
       if (*ip == 0 && current_filename == 0)
-        /* No filename */
-        fprintf (stderr, G00037, G00034);
+	/* No filename */
+	fprintf (stderr, G00037, G00034);
       else
-        write_file (lp[0] ? lp[0] : NPOS, *ip ? ip : current_filename);
+	write_file (lp[0] ? lp[0] : NPOS, *ip ? ip : current_filename);
       break;
-    case 'i':                   /* insert */
+    case 'i':			/* insert */
       if (lp[0] == 0)
-        lp[0] = current_line;
+	lp[0] = current_line;
       current_line = insert_block (lp[0] - 1);
       break;
-    case 'a':                   /* append */
+    case 'a':			/* append */
       current_line = insert_block (get_last_line ());
       break;
-    case 's':                   /* search */
+    case 's':			/* search */
       if (lp[0] == 0)
-        lp[0] = MIN (current_line + 1, (long) get_last_line ());
+	lp[0] = MIN (current_line + 1, (long) get_last_line ());
       if (lp[1] == 0)
-        lp[1] = get_last_line ();
+	lp[1] = get_last_line ();
       current_line = search_buffer (current_line, lp[0] - 1, lp[1] - 1,
-                                    verifying, ip + 1);
+				    verifying, ip + 1);
       break;
-    case 'r':                   /* replace */
+    case 'r':			/* replace */
       if (lp[0] == 0)
-        lp[0] = MIN (current_line + 1, (long) get_last_line ());
+	lp[0] = MIN (current_line + 1, (long) get_last_line ());
       if (lp[1] == 0)
-        lp[1] = get_last_line ();
+	lp[1] = get_last_line ();
       current_line = replace_buffer (current_line, lp[0] - 1, lp[1] - 1,
-                                     verifying, ip + 1);
+				     verifying, ip + 1);
       break;
     default:
       /* Invalid user input */
@@ -283,12 +296,23 @@ main (int argc, char **argv)
   puts (G00029);
   create_buffer ();
   if (argc >= 2)
-    transfer_file (0, current_filename = argv[1]);
+    {
+      current_filename = argv[1];
+      if (file_exists (current_filename))
+	transfer_file (0, current_filename);
+      else
+	{
+	  fputs (current_filename, stdout);
+	  fputc (':', stdout);
+	  fputc (' ', stdout);
+	  puts (G00038);
+	}
+    }
   while (!exiting)
     {
       s = read_line ("*");
       if (s == 0)
-        abort ();
+	abort ();
       parse_command (s);
     }
   destroy_buffer ();

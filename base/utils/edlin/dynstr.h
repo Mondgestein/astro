@@ -48,33 +48,35 @@ STRING_T *DScreate_with_size (size_t n, capacity c);
 STRING_T *DScreate_copy (STRING_T * x);
 void DSdestroy (STRING_T * this);
 STRING_T *DSappendchar (STRING_T * this, int c, size_t nr);
-STRING_T *DSappendcstr (STRING_T * this, char *s, size_t ns);
+STRING_T *DSappendcstr (STRING_T * this, const char *s, size_t ns);
 STRING_T *DSappend (STRING_T * this, STRING_T * str, size_t pos, size_t ns);
 STRING_T *DSassignchar (STRING_T * this, int c, size_t n);
-STRING_T *DSassigncstr (STRING_T * this, char *s, size_t n);
+STRING_T *DSassigncstr (STRING_T * this, const char *s, size_t n);
 STRING_T *DSassign (STRING_T * this, STRING_T * str, size_t pos, size_t ns);
 STRING_T *DSinsertchar (STRING_T * this, size_t p0, int c, size_t nr);
-STRING_T *DSinsertcstr (STRING_T * this, size_t p0, char *s, size_t ns);
+STRING_T *DSinsertcstr (STRING_T * this, size_t p0, const char *s, size_t ns);
 STRING_T *DSinsert (STRING_T * this, size_t p0, STRING_T * str, size_t pos,
-                    size_t ns);
+		    size_t ns);
 STRING_T *DSremove (STRING_T * this, size_t p0, size_t nr);
 STRING_T *DSreplacechar (STRING_T * this, size_t p0, size_t n0, int c,
-                         size_t nr);
-STRING_T *DSreplacecstr (STRING_T * this, size_t p0, size_t n0, char *s,
-                         size_t ns);
+			 size_t nr);
+STRING_T *DSreplacecstr (STRING_T * this, size_t p0, size_t n0, const char *s,
+			 size_t ns);
 STRING_T *DSreplace (STRING_T * this, size_t p0, size_t n0, STRING_T * str,
-                     size_t pos, size_t ns);
+		     size_t pos, size_t ns);
 int DSget_at (STRING_T * this, size_t p0);
 void DSput_at (STRING_T * this, size_t p0, int c);
 size_t DScopy (STRING_T * this, char *s, size_t n, size_t p0);
-size_t DSfind (STRING_T * this, char *s, size_t p0, size_t n);
-size_t DSrfind (STRING_T * this, char *s, size_t p0, size_t n);
-size_t DSfind_first_of (STRING_T * this, char *s, size_t p0, size_t n);
-size_t DSfind_last_of (STRING_T * this, char *s, size_t p0, size_t n);
-size_t DSfind_first_not_of (STRING_T * this, char *s, size_t p0, size_t n);
-size_t DSfind_last_not_of (STRING_T * this, char *s, size_t p0, size_t n);
+size_t DSfind (STRING_T * this, const char *s, size_t p0, size_t n);
+size_t DSrfind (STRING_T * this, const char *s, size_t p0, size_t n);
+size_t DSfind_first_of (STRING_T * this, const char *s, size_t p0, size_t n);
+size_t DSfind_last_of (STRING_T * this, const char *s, size_t p0, size_t n);
+size_t DSfind_first_not_of (STRING_T * this, const char *s, size_t p0,
+			    size_t n);
+size_t DSfind_last_not_of (STRING_T * this, const char *s, size_t p0,
+			   size_t n);
 int DScomparechar (STRING_T * this, int c, size_t p0, size_t ns);
-int DScomparecstr (STRING_T * this, char *s, size_t p0, size_t ns);
+int DScomparecstr (STRING_T * this, const char *s, size_t p0, size_t ns);
 int DScompare (STRING_T * this, STRING_T * str, size_t p0, size_t ns);
 char *DScstr (STRING_T * this);
 size_t DSlength (STRING_T * this);

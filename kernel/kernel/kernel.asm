@@ -46,7 +46,8 @@ STACK_SIZE      equ     384/2           ; stack allocated in words
 %ifidn __OUTPUT_FORMAT__, obj
 ..start:
 %endif
-entry:  
+bootloadunit:		; (byte of short jump re-used)
+entry:
                 jmp short realentry
 
 ;************************************************************       
@@ -56,6 +57,7 @@ entry:
 ;************************************************************       
                 global _LowKernelConfig                                        
 _LowKernelConfig:
+config_signature:
                 db 'CONFIG'             ; constant
                 dw configend-configstart; size of config area
                                         ; to be checked !!!
@@ -72,10 +74,26 @@ BootHarddiskSeconds         db 0        ;
 ; The following VERSION resource must be keep in sync with VERSION.H
 Version_OemID               db 0xFD     ; OEM_ID
 Version_Major               db 2
-Version_Revision            dw 41       ; REVISION_SEQ
+Version_Revision            dw 43       ; REVISION_SEQ
 Version_Release             dw 1        ; 0=release build, >0=svn#
 
+CheckDebugger:	            db 0        ; 0 = no check, 1 = check, 2 = assume present
+Verbose	                    db 0        ; -1 = quiet, 0 = normal, 1 = verbose
+
+PartitionMode				db 0x1f		; bits 0-1: 01=GPT if found, 00=MBR if found, 11=Hybrid, GPT first then MBR, 10=Hybrid, MBR first then GPT
+										;           in hybrid mode, EE partitions ignored, drives assigned by GPT or MBR first based on hybrid type
+										; bits 2-4: 001=mount ESP (usually FAT32) partition, 010=mount MS Basic partitions, 100=mount unknown partitions
+										;           111=attempt to mount all paritions, 110=attempt to mount all but ESP partitions
+										; bits 5-7: reserved, 0 else undefined behavior
+
 configend:
+kernel_config_size: equ configend - config_signature
+	; must be below-or-equal the size of struct _KernelConfig
+	;  in the file kconfig.h !
+
+		times (32 - 4) - ($ - $$) db 0
+bootloadstack:		dd 0
+
 
 ;************************************************************       
 ; KERNEL CONFIGURATION AREA END
@@ -94,8 +112,21 @@ configend:
 
                 cpu 8086                ; (keep initial entry compatible)
 
+global realentry
 realentry:                              ; execution continues here
+	push cs
+	pop ds
+	xor di, di
+	mov byte [di + bootloadunit - $$], bl
+	push bp
+	mov word [di + bootloadstack - $$], sp
+	mov word [di + bootloadstack + 2 - $$], ss
+	jmp entry_common
 
+
+	times 0C0h - ($ - $$) nop	; magic offset (used by exeflat)
+entry_common:
+%ifndef QUIET
                 push ax
                 push bx
                 pushf              
@@ -105,12 +136,35 @@ realentry:                              ; execution continues here
                 popf
                 pop bx
                 pop ax
+%endif
 
+	push cs
+	pop ds
                 jmp     IGROUP:kernel_start
+
 beyond_entry:   times   256-(beyond_entry-entry) db 0
                                         ; scratch area for data (DOS_PSP)
+_master_env equ $ - 128
+global _master_env
 
 segment INIT_TEXT
+
+%ifdef TEST_FILL_INIT_TEXT
+ %macro step 0
+ %if _LFSR & 1
+  %assign _LFSR (_LFSR >> 1) ^ 0x80200003
+ %else
+  %assign _LFSR (_LFSR >> 1)
+ %endif
+ %endmacro
+
+	align 16
+ %assign _LFSR 1
+ %rep 1024 * 8
+	dd _LFSR
+	step
+ %endrep
+%endif
 
                 extern  _FreeDOSmain
                 extern  _query_cpu
@@ -119,7 +173,9 @@ segment INIT_TEXT
                 ; kernel start-up
                 ;
 kernel_start:
+	cld
 
+%ifndef QUIET
                 push bx
                 pushf              
                 mov ax, 0e32h           ; '2' Tracecode - kernel entered
@@ -127,11 +183,57 @@ kernel_start:
                 int 010h
                 popf
                 pop bx
+%endif
 
-                mov     ax,I_GROUP
+
+extern _kernel_command_line
+
+		; INP:	ds => entry section, with CONFIG block
+		;		and compressed entry help data
+		;		(actually always used now)
+initialise_command_line_buffer:
+	mov dx, I_GROUP
+	mov es, dx
+
+	mov bl, [bootloadunit]
+	lds si, [bootloadstack]		; -> original ss:sp - 2
+	lea ax, [si + 2]		; ax = original sp
+	mov si, word [si]		; si = original bp
+
+		; Note that the kernel command line buffer in
+		;  the init data segment is pre-initialised to
+		;  hold 0x00 0xFF in the first two bytes. This
+		;  is used to indicate no command line present,
+		;  as opposed to an empty command line which
+		;  will hold 0x00 0x00.
+		; If any of the branches to .none are taken then
+		;  the buffer is not modified so it retains the
+		;  0x00 0xFF contents.
+	cmp si, 114h			; buffer fits below ss:bp ?
+	jb .none			; no -->
+	cmp word [si - 14h], "CL"	; signature passed to us ?
+	jne .none			; no -->
+	lea si, [si - 114h]		; -> command line buffer
+	cmp ax, si			; stack top starts below-or-equal buffer ?
+	ja .none			; no -->
+	mov di, _kernel_command_line	; our buffer
+	mov cx, 255
+	xor ax, ax
+	push di
+	rep movsb		; copy up to 255 bytes
+	stosb			; truncate
+	pop di
+	mov ch, 1		; cx = 256
+	repne scasb		; scan for terminator
+	rep stosb		; clear remainder of buffer
+				; (make sure we do not have 0x00 0xFF
+				;  even if the command line given is
+				;  actually the empty string)
+.none:
+
                 cli
-                mov     ss,ax
-                mov     sp,init_tos
+                mov     ss, dx
+                mov     sp, init_tos
                 int     12h             ; move init text+data to higher memory
                 mov     cl,6
                 shl     ax,cl           ; convert kb to para
@@ -185,6 +287,7 @@ cont:           ; Now set up call frame
                 mov     ds,[cs:_INIT_DGROUP]
                 mov     bp,sp           ; and set up stack frame for c
 
+%ifndef QUIET
                 push bx
                 pushf              
                 mov ax, 0e33h           ; '3' Tracecode - kernel entered
@@ -192,6 +295,7 @@ cont:           ; Now set up call frame
                 int 010h
                 popf
                 pop bx
+%endif
 
                 mov     byte [_BootDrive],bl ; tell where we came from
 
@@ -212,11 +316,43 @@ cont:           ; Now set up call frame
                 cpu XCPU
 %endif
                 mov     [_CPULevel], al
-                
-                mov     ax,ss
-                mov     ds,ax
-                mov     es,ax
-                jmp     _FreeDOSmain
+
+initialise_kernel_config:
+extern _InitKernelConfig
+
+	mov ax, ss			; => init data segment
+	mov si, 60h
+	mov ds, si			; => entry section
+	mov si, _LowKernelConfig	; -> our CONFIG block
+	mov es, ax			; => init data segment
+	mov di, _InitKernelConfig	; -> init's CONFIG block buffer
+	mov cx, kernel_config_size / 2	; size that we support
+	rep movsw			; copy it over
+%if kernel_config_size & 1
+	movsb				; allow odd size
+%endif
+	mov ds, ax			; => init data segment
+
+check_debugger_present:
+extern _debugger_present
+
+	mov al, 1			; assume debugger present
+	cmp byte [di - kernel_config_size + (CheckDebugger - config_signature)], 1
+	ja .skip_ints_00_06		; 2 means assume present
+	jb .absent			; 0 means assume absent
+	clc				; 1 means check
+	int3				; break to debugger
+	jc .skip_ints_00_06
+		; The debugger should set CY here to indicate its
+		;  presence. The flag set is checked later to skip
+		;  overwriting the interrupt vectors 00h, 01h, 03h,
+		;  and 06h. This logic is taken from lDOS init.
+.absent:
+	xor ax, ax			; no debugger present
+.skip_ints_00_06:
+	mov byte [_debugger_present], al
+
+           jmp     _FreeDOSmain
 
 %if XCPU != 86
         cpu 8086
@@ -320,14 +456,22 @@ segment _LOWTEXT
                 global _intvec_table
 _intvec_table:  db 10h
                 dd 0
+                ; used by int13 handler and get/set via int 2f/13h
+                global  _BIOSInt13 ; BIOS provided disk handler 
+                global  _UserInt13 ; actual disk handler used by kernel
                 db 13h
-                dd 0
+_BIOSInt13:     dd 0  
                 db 15h
                 dd 0
+                ; used for cleanup on reboot
+                global  _BIOSInt19
                 db 19h
-                dd 0
+_BIOSInt19:     dd 0
                 db 1Bh
                 dd 0
+                ; default to using BIOS provided disk handler
+                db 13h
+_UserInt13:     dd 0 
 
                 ; floppy parameter table
                 global _int1e_table
@@ -375,7 +519,7 @@ _first_mcb      dw      0               ;-0002 Start of user memory
                 global  MARK0026H
 ; A reference seems to indicate that this should start at offset 26h.
 MARK0026H       equ     $
-_DPBp           dd      0               ; 0000 First drive Parameter Block
+_DPBp           dd      -1              ; 0000 First drive Parameter Block
                 global  _sfthead
 _sfthead        dd      0               ; 0004 System File Table head
                 global  _clock
@@ -406,9 +550,9 @@ _nul_dev:           ; 0022 device chain root
                 db      'NUL     '
                 global  _njoined
 _njoined        db      0               ; 0034 number of joined devices
-                dw      0               ; 0035 DOS 4 pointer to special names (always zero in DOS 5)
+                dw      0               ; 0035 DOS 4 near pointer to special names (always zero in DOS 5) [setver precursor]
                 global  _setverPtr
-_setverPtr      dw      0,0             ; 0037 setver list
+_setverPtr      dw      0,0             ; 0037 setver list (far pointer, set by setver driver)
                 dw      0               ; 003B cs offset for fix a20
                 dw      0               ; 003D psp of last umb exec
                 global _LoL_nbuffers
@@ -477,13 +621,26 @@ _winStartupInfo:
                 dd 0 ; next startup info structure, 0:0h marks end
                 dd 0 ; far pointer to name virtual device file or 0:0h
                 dd 0 ; far pointer, reference data for virtual device driver
+ %ifnidni __OUTPUT_FORMAT__, elf
                 dw instance_table,seg instance_table ; array of instance data
+ %else
+                dw instance_table ; array of instance data
+global _winseg1
+_winseg1:	dw 0
+ %endif
 instance_table: ; should include stacks, Win may auto determine SDA region
                 ; we simply include whole DOS data segment
-                dw 0, seg _DATASTART ; [SEG:OFF] address of region's base
-                dw markEndInstanceData wrt seg _DATASTART ; size in bytes
+ %ifnidni __OUTPUT_FORMAT__, elf
+                dw seg _DATASTART, 0 ; [SEG:OFF] address of region's base
+                dw _markEndInstanceData wrt seg _DATASTART ; size in bytes
+ %else
+global _winseg2
+_winseg2:	dw 0
+                dw 0 ; [SEG:OFF] address of region's base
+global _winseg3
+_winseg3:	dw 0 ; size in bytes
+ %endif
                 dd 0 ; 0 marks end of table
-patch_bytes:         ; mark end of array of offsets of critical section bytes to patch
                 dw 0 ; and 0 length for end of instance_table entry
                 global  _winPatchTable
 _winPatchTable: ; returns offsets to various internal variables
@@ -492,11 +649,11 @@ _winPatchTable: ; returns offsets to various internal variables
                 dw save_BX     ; where BX stored during int21h dispatch
                 dw _InDOS      ; offset of InDOS flag
                 dw _MachineId  ; offset to variable containing MachineID
-                dw patch_bytes ; offset of to array of offsets to patch
+                dw _CritPatch  ; offset of to array of offsets to patch
                                ; NOTE: this points to a null terminated
                                ; array of offsets of critical section bytes
-                               ; to patch, for now we just point this to
-                               ; an empty table, purposely not _CritPatch
+                               ; to patch, for now we can just point this
+                               ; to an empty table
                                ; ie we just point to a 0 word to mark end
                 dw _uppermem_root ; seg of last arena header in conv memory
                                   ; this matches MS DOS's location, but 
@@ -509,7 +666,9 @@ _winPatchTable: ; returns offsets to various internal variables
 _firstsftt:             
                 dd -1                   ; link to next
                 dw 5                    ; count 
-        
+                times 5*59 db 0         ; reserve space for the 5 sft entries
+                db 0                    ; pad byte so next value on even boundary        
+
 ; Some references seem to indicate that this data should start at 01fbh in
 ; order to maintain 100% MS-DOS compatibility.
                 times (01fbh - ($ - DATASTART)) db 0
@@ -576,13 +735,15 @@ _net_name       db      '               ' ;-27 - 15 Character Network Name
                 global  _return_code
                 global  _internal_data
 
+; ensure offset of critical patch table remains fixed, some programs hard code offset
+                times (0315h - ($ - DATASTART)) db 0
                 global  _CritPatch
-_CritPatch      dw      0d0ch           ;-11 zero list of patched critical
-                dw      0d0ch           ;    section variables
-                dw      0d0ch
-                dw      0d0ch
-                dw      0d0ch
-                db      0               ;-01 - unknown
+_CritPatch      dw      0               ;-11 zero list of patched critical
+                dw      0               ;    section variables
+                dw      0               ;    DOS puts 0d0ch here but some
+                dw      0               ;    progs really write to that addr.
+                dw      0               ;-03 - critical patch list terminator
+                db      90h             ;-01 - unused, NOP pad byte
 _internal_data:              ; <-- Address returned by INT21/5D06
 _ErrorMode      db      0               ; 00 - Critical Error Flag
 _InDOS          db      0               ; 01 - Indos Flag
@@ -842,7 +1003,8 @@ segment DYN_DATA
 _Dyn:
         DynAllocated dw 0
 
-markEndInstanceData:  ; mark end of DOS data seg we say needs instancing
+global _markEndInstanceData
+_markEndInstanceData:  ; mark end of DOS data seg we say needs instancing
 
         
 segment ID_B
@@ -1046,17 +1208,20 @@ __HMARelocationTableEnd:
 ; will be only ever called, if HMA (DOS=HIGH) is enabled.
 ; for obvious reasons it should be located at the relocation table
 ;
-    global _XMSDriverAddress
-_XMSDriverAddress:  
-                    dw 0            ; XMS driver, if detected
-                    dw 0
 
     global _ENABLEA20
 _ENABLEA20:
     mov ah,5
-UsingXMSdriver:    
+UsingXMSdriver:
+
+	global _XMS_Enable_Patch
+_XMS_Enable_Patch:		; SMC: patch to nop (90h) to enable use of XMS
+	retf
+
     push bx
-    call far [cs:_XMSDriverAddress]
+    call 0:0			; (immediate far address patched)
+    global _XMSDriverAddress
+_XMSDriverAddress: equ $ - 4	; XMS driver, if detected
     pop  bx
     retf
 
@@ -1065,8 +1230,6 @@ _DISABLEA20:
     mov ah,6
     jmp short UsingXMSdriver
 
-dslowmem  dw 0
-eshighmem dw 0ffffh
 
     global forceEnableA20
 forceEnableA20:
@@ -1074,67 +1237,55 @@ forceEnableA20:
     push ds
     push es
     push ax
-    
-forceEnableA20retry:    
-    mov  ds, [cs:dslowmem]
-    mov  es, [cs:eshighmem]
-    
-    mov ax, [ds:00000h]    
-    cmp ax, [es:00010h]    
-    jne forceEnableA20success
+	push si
+	push di
+	push cx
+	pushf
+	cld
 
-    mov ax, [ds:00002h]    
-    cmp ax, [es:00012h]    
-    jne forceEnableA20success
+.retry:
+	xor si, si		; = 0000h
+	mov ds, si		; => low memory (IVT)
+	dec si			; = FFFFh
+	mov es, si		; => HMA at offset 10h
+	inc si			; back to 0, -> IVT entry 0 and 1
+	mov di, 10h		; -> HMA, or wrapping around to 0:0
+	mov cx, 4
+	repe cmpsw		; compare up to 4 words
+	je .enable
 
-    mov ax, [ds:00004h]    
-    cmp ax, [es:00014h]    
-    jne forceEnableA20success
-
-    mov ax, [ds:00006h]    
-    cmp ax, [es:00016h]    
-    jne forceEnableA20success
-
-;
-;   ok, we have to enable A20 )at least seems so
-;
-
-    call DGROUP:_ENABLEA20
-    
-    jmp short forceEnableA20retry
-    
-    
-    
-forceEnableA20success:    
+.success:
+	popf
+	pop cx
+	pop di
+	pop si
     pop ax
     pop es
     pop ds
-    ret
-                
-;
+    retn
+
+.enable:
+		; ok, we have to enable A20 (at least seems so)
+	push cs			; make far call stack frame
+	call _ENABLEA20
+	jmp short .retry
+
+
 ; global f*cking compatibility issues:
 ;
 ; very old brain dead software (PKLITE, copyright 1990)
 ; forces us to execute with A20 disabled
 ;
 
-global _ExecUserDisableA20
-
+	global _ExecUserDisableA20
 _ExecUserDisableA20:
-
-    cmp word [cs:_XMSDriverAddress], byte 0
-    jne NeedToDisable
-    cmp word [cs:_XMSDriverAddress+2], byte 0
-    je noNeedToDisable
-NeedToDisable:        
-    push ax 
-    call DGROUP:_DISABLEA20
+    push ax
+	push cs			; make far call stack frame
+	call _DISABLEA20	; (no-op if not in HMA, patched otherwise)
     pop ax
-noNeedToDisable:
-    iret        
+    iret
 
 
-;
 ; Default Int 24h handler -- always returns fail
 ; so we have not to relocate it (now)
 ;

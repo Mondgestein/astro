@@ -1,6 +1,6 @@
 @echo off
 REM Tested on Win XP Home SP2 w/ OpenWatcom 1.5
-REM builds FreeDOS's edlin 2.19 (by Gregory Pietsch:  gpietsch@comcast.net)
+REM builds FreeDOS's edlin 2.23 (by Gregory Pietsch:  gpietsch@comcast.net)
 REM
 REM rugxulo@gmail.com (this .BAT file's author)
 REM Saturday, December 30, 2006   11:57pm
@@ -28,9 +28,9 @@ REM = message file for a certain popular conlang (hint: see my e-mail addy)
 REM   = N.B. I'm no great scholar, but I can read it fairly well.  :-)
 REM
 
-if not exist edlin-2.19\nul if exist edlin-2.19.zip unzip edlin-2.19.zip
-if not exist edlin-2.19\nul goto end
-cd edlin-2.19
+if not exist edlin-2.23\nul if exist edlin-2.23.zip unzip edlin-2.23.zip
+if not exist edlin-2.23\nul goto end
+cd edlin-2.23
 
 REM new FreeDOS i18n support (replaces old msgs-en.h, etc. files)
 copy /b msgscats.h msgs.h

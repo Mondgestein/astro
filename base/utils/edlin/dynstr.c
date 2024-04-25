@@ -29,19 +29,13 @@
 /* includes */
 
 #include "config.h"
-#if defined(STDC_HEADERS) || defined(HAVE_LIMITS_H)
 #include <limits.h>
-#endif
 #ifdef HAVE_MEMORY_H
 #include <memory.h>
 #endif
 #include <stdio.h>
-#if defined(STDC_HEADERS) || defined(HAVE_STDLIB_H)
 #include <stdlib.h>
-#endif
-#if defined(STDC_HEADERS) || defined(HAVE_STRING_H)
 #include <string.h>
-#endif
 #ifdef HAVE_STRINGS_H
 #include <strings.h>
 #endif
@@ -491,7 +485,7 @@ DSappendchar (STRING_T * this, int c, size_t nr)
    The ns parameter specifies the number of characters from s to
    append.  Set ns to NPOS to append the whole string.  */
 STRING_T *
-DSappendcstr (STRING_T * this, char *s, size_t ns)
+DSappendcstr (STRING_T * this, const char *s, size_t ns)
 {
   size_t n;
 
@@ -550,7 +544,7 @@ DSassignchar (STRING_T * this, int c, size_t n)
    comprised of the first n characters of s.  Use NPOS for n if you
    want the whole string.  */
 STRING_T *
-DSassigncstr (STRING_T * this, char *s, size_t n)
+DSassigncstr (STRING_T * this, const char *s, size_t n)
 {
   if (n == NPOS)
     n = strlen (s);
@@ -614,7 +608,7 @@ DSinsertchar (STRING_T * this, size_t p0, int c, size_t nr)
    into the string pointed to by this at position p0. As usual, use
    NPOS for the ns parameter if you want to insert the whole string.  */
 STRING_T *
-DSinsertcstr (STRING_T * this, size_t p0, char *s, size_t ns)
+DSinsertcstr (STRING_T * this, size_t p0, const char *s, size_t ns)
 {
   size_t n;
 
@@ -706,7 +700,8 @@ DSreplacechar (STRING_T * this, size_t p0, size_t n0, int c, size_t nr)
    for length n0 with ns characters coming from the contents of the C
    string s. If ns is NPOS, use the whole string s.  */
 STRING_T *
-DSreplacecstr (STRING_T * this, size_t p0, size_t n0, char *s, size_t ns)
+DSreplacecstr (STRING_T * this, size_t p0, size_t n0, const char *s,
+	       size_t ns)
 {
   size_t n, nm;
 
@@ -799,7 +794,7 @@ DScopy (STRING_T * this, char *s, size_t n, size_t p0)
    substring equal to the first n characters pointed to by s is.  (This is
    similar to the strstr() function.)  Return NPOS on failure.  */
 size_t
-DSfind (STRING_T * this, char *s, size_t p0, size_t n)
+DSfind (STRING_T * this, const char *s, size_t p0, size_t n)
 {
   size_t nmax;
   char *t, *u;
@@ -819,7 +814,7 @@ DSfind (STRING_T * this, char *s, size_t p0, size_t n)
 
 /* DSrfind: Similar to DSfind, except that the string is searched backwards.  */
 size_t
-DSrfind (STRING_T * this, char *s, size_t p0, size_t n)
+DSrfind (STRING_T * this, const char *s, size_t p0, size_t n)
 {
   char *t;
 
@@ -841,7 +836,7 @@ DSrfind (STRING_T * this, char *s, size_t p0, size_t n)
 /* DSfind_first_of: Find the first character within this (starting at position
    p0 within this) that matches any of the first n characters of string s.  */
 size_t
-DSfind_first_of (STRING_T * this, char *s, size_t p0, size_t n)
+DSfind_first_of (STRING_T * this, const char *s, size_t p0, size_t n)
 {
   char *t, *u;
 
@@ -860,7 +855,7 @@ DSfind_first_of (STRING_T * this, char *s, size_t p0, size_t n)
 /* DSfind_last_of: Find the last character within this (starting at position
    p0 within this) that matches any of the first n characters of string s.  */
 size_t
-DSfind_last_of (STRING_T * this, char *s, size_t p0, size_t n)
+DSfind_last_of (STRING_T * this, const char *s, size_t p0, size_t n)
 {
   char *t;
 
@@ -882,7 +877,7 @@ DSfind_last_of (STRING_T * this, char *s, size_t p0, size_t n)
 /* DSfind_first_not_of: Similar to DSfind_first_of, except that we're finding
    the first character that matches none of the first n characters of s.  */
 size_t
-DSfind_first_not_of (STRING_T * this, char *s, size_t p0, size_t n)
+DSfind_first_not_of (STRING_T * this, const char *s, size_t p0, size_t n)
 {
   char *t, *u;
 
@@ -902,7 +897,7 @@ DSfind_first_not_of (STRING_T * this, char *s, size_t p0, size_t n)
    finding the last character that matches none of the first n characters of
    string s.  */
 size_t
-DSfind_last_not_of (STRING_T * this, char *s, size_t p0, size_t n)
+DSfind_last_not_of (STRING_T * this, const char *s, size_t p0, size_t n)
 {
   char *t;
 
@@ -941,7 +936,7 @@ DScomparechar (STRING_T * this, int c, size_t p0, size_t ns)
 /* DScomparecstr: Compare the substring starting at this[p0] with a string s
    for ns characters.  */
 int
-DScomparecstr (STRING_T * this, char *s, size_t p0, size_t ns)
+DScomparecstr (STRING_T * this, const char *s, size_t p0, size_t ns)
 {
   size_t n;
   int ans;

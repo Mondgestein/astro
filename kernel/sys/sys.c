@@ -121,8 +121,8 @@ struct _diskfree_t {
 int int86(int ivec, union REGS *in, union REGS *out)
 {
   /* must save sp for int25/26 */
-  asm("mov %5, (1f+1); jmp 0f; 0:mov %%di, %%dx; mov %%sp, %%di;"
-      "1:int $0x00; mov %%di, %%sp; sbb %0, %0" :
+  asm("mov %5, (1f+1); jmp 0f; 0:push %%ds; mov %%di, %%dx; mov %%sp, %%di;"
+      "1:int $0x00; mov %%di, %%sp; pop %%ds; sbb %0, %0" :
       "=r"(out->x.cflag),
       "=a"(out->x.ax), "=b"(out->x.bx), "=c"(out->x.cx), "=d"(out->x.dx) :
       "q"((unsigned char)ivec), "a"(in->x.ax), "b"(in->x.bx),
@@ -394,6 +394,7 @@ struct bootsectortype32 {
  * globals needed by put_boot & check_space
  */
 enum {FAT12 = 12, FAT16 = 16, FAT32 = 32} fs;  /* file system type */
+unsigned smallfat32;
 /* static */ struct xfreespace x; /* we make this static to be 0 by default -
                                      this avoids FAT misdetections */
 
@@ -1448,9 +1449,7 @@ void dumpBS(const char *bsFile, int drive)
 
 void put_boot(SYSOptions *opts)
 {
-#ifdef WITHFAT32
   struct bootsectortype32 *bs32;
-#endif
   struct bootsectortype *bs;
   UBYTE oldboot[SEC_SIZE], newboot[SEC_SIZE];
   UBYTE default_bpb[0x5c];
@@ -1485,7 +1484,7 @@ void put_boot(SYSOptions *opts)
     saveBS(opts->bsFileOrig, oldboot);
   }
 
-  bs = (struct bootsectortype *)&oldboot;
+  bs = (struct bootsectortype *)oldboot;
 
   if (bs->bsBytesPerSec != SEC_SIZE)
   {
@@ -1508,14 +1507,26 @@ void put_boot(SYSOptions *opts)
     totalSectors = bs32->bsSectors ? bs32->bsSectors : bs32->bsHugeSectors;
     dataSectors = totalSectors
       - bs32->bsResSectors - (bs32->bsFATs * fatSize) - rootDirSectors;
-    clusters = dataSectors / bs32->bsSecPerClust;
- 
-    if (clusters < FAT_MAGIC)        /* < 4085 */
-      fs = FAT12;
-    else if (clusters < FAT_MAGIC16) /* < 65525 */
-      fs = FAT16;
-    else
+    clusters = dataSectors / (((bs32->bsSecPerClust - 1) & 0xFF) + 1);
+
+    if (bs32->bsFATsecs == 0) {
+      if (clusters >= 0xFFFfff5) {     /* FAT32 has 28 significant bits */
+        printf("Too many clusters (%lXh) for FAT32 file system!\n", clusters);
+        exit(1);
+      }
       fs = FAT32;
+      if (clusters < FAT_MAGIC16)
+        smallfat32 = 1;
+    } else {
+      if (clusters < FAT_MAGIC)        /* < 4085 */
+        fs = FAT12;
+      else if (clusters < FAT_MAGIC16) /* < 65525 */
+        fs = FAT16;
+      else {
+        printf("Too many clusters (%lXh) for non-FAT32 file system!\n", clusters);
+        exit(1);
+      }
+    }
   }
 
   /* bit 0 set if function to use current BPB, clear if Device
@@ -1528,7 +1539,7 @@ void put_boot(SYSOptions *opts)
   if (fs == FAT32)
   {
 	if (opts->verbose)
-		printf("FAT type: FAT32\n");
+		printf("FAT type: FAT32%s\n", smallfat32 ? " (small)" : "");
     /* get default bpb (but not for floppies) */
     if (opts->dstDrive >= 2 &&
         generic_block_ioctl(opts->dstDrive + 1, 0x4860, default_bpb) == 0)
@@ -1568,8 +1579,9 @@ void put_boot(SYSOptions *opts)
 
       /* !!! if boot sector changes then update these locations !!! */
       {
+          /* magic offset: LBA detection */
           unsigned offset;
-          offset = (fs == FAT16) ? 0x176 : 0x179;
+          offset = (fs == FAT16) ? 0x178 : 0x17B;
           
           if ( (newboot[offset]==0x84) && (newboot[offset+1]==0xD2) ) /* test dl,dl */
           {
@@ -1587,7 +1599,8 @@ void put_boot(SYSOptions *opts)
           }
           else
           {
-            printf("%s : fat boot sector does not match expected layout\n", pgm);
+            printf("%s: Internal error: FAT1%c LBA detect unexpected content\n",
+        	pgm, fs == FAT12 ? '2' : '6');
             exit(1);
           }
       }
@@ -1611,7 +1624,7 @@ void put_boot(SYSOptions *opts)
 #endif
     memcpy(&newboot[SBOFFSET], &oldboot[SBOFFSET], SBSIZE);
 
-  bs = (struct bootsectortype *)&newboot;
+  bs = (struct bootsectortype *)newboot;
 
   /* originally OemName was "FreeDOS", changed for better compatibility */
   memcpy(bs->OemName, "FRDOS5.1", 8); /* Win9x seems to require
@@ -1621,7 +1634,7 @@ void put_boot(SYSOptions *opts)
 #ifdef WITHFAT32
   if (fs == FAT32)
   {
-    bs32 = (struct bootsectortype32 *)&newboot;
+    bs32 = (struct bootsectortype32 *)newboot;
     /* ensure appears valid, if not then force valid */
     if ((bs32->bsBackupBoot < 1) || (bs32->bsBackupBoot > bs32->bsResSectors))
     {
@@ -1642,8 +1655,14 @@ void put_boot(SYSOptions *opts)
     */
     if (opts->kernel.stdbs)
     {
-      ((int *)newboot)[0x78/sizeof(int)] = opts->kernel.loadaddr;
-      bsBiosMovOff = 0x82;
+      /* magic offset: loadsegoff_60 */
+      int defaultload = *(int *)(&newboot[0x78]);
+      if (defaultload != 0x60 && defaultload != 0x70) {
+        printf("%s: Internal error: FAT32 load seg unexpected content\n", pgm);
+        exit(1);
+      }
+      *(int *)(&newboot[0x78]) = opts->kernel.loadaddr;
+      bsBiosMovOff = 0x82;	/* magic offset: mov byte [bp + 40h], dl */
     }
     else /* compatible bs */
     {
@@ -1682,35 +1701,53 @@ void put_boot(SYSOptions *opts)
     */
     if (opts->kernel.stdbs)
     {
+      /* magic offset: loadsegoff_60 */
+      int defaultload = *(int *)(&newboot[0x5C]);
+      if (defaultload != 0x60 && defaultload != 0x70) {
+        printf("%s: Internal error: FAT1%c load seg unexpected content\n",
+        	pgm, fs == FAT12 ? '2' : '6');
+        exit(1);
+      }
       /* this sets the segment we load the kernel to, default is 0x60:0 */
-      ((int *)newboot)[0x5c/sizeof(int)] = opts->kernel.loadaddr;
-      bsBiosMovOff = 0x66;
+      *(int *)(&newboot[0x5C]) = opts->kernel.loadaddr;
+      bsBiosMovOff = 0x66;	/* magic offset: mov byte [bp + 24h], dl */
     }
     else
     {
+      int defaultload;
       /* load segment hard coded to 0x70 in oem compatible boot sector, */
       /* this however changes the offset jumped to default 0x70:0       */
-      if (fs == FAT12)
-        ((int *)newboot)[0x11c/sizeof(int)] = opts->kernel.loadaddr;
-      else
-        ((int *)newboot)[0x119/sizeof(int)] = opts->kernel.loadaddr;
-      bsBiosMovOff = 0x4F;
+      if (fs == FAT12) {
+        /* magic offset: jmp LOADSEG:xxxxh */
+        defaultload = *(int *)(&newboot[0x11A]);
+        *(int *)(&newboot[0x11A]) = opts->kernel.loadaddr;
+      } else {
+        /* magic offset: jmp LOADSEG:xxxxh */
+        defaultload = *(int *)(&newboot[0x118]);
+        *(int *)(&newboot[0x118]) = opts->kernel.loadaddr;
+      }
+      if (defaultload != 0x0 && defaultload != 0x200) {
+        printf("%s: Internal error: OEM FAT1%c load ofs unexpected content\n",
+        	pgm, fs == FAT12 ? '2' : '6');
+        exit(1);
+      }
+      bsBiosMovOff = 0x4F;	/* magic offset: mov byte [bp + 24h], dl */
     }
   }
 
-  if (opts->ignoreBIOS)
+  if ( (newboot[bsBiosMovOff]==0x88) && (newboot[bsBiosMovOff+1]==0x56) )
   {
-    if ( (newboot[bsBiosMovOff]==0x88) && (newboot[bsBiosMovOff+1]==0x56) )
+    if (opts->ignoreBIOS)
     {
       newboot[bsBiosMovOff] = 0x90;  /* NOP */  ++bsBiosMovOff;
       newboot[bsBiosMovOff] = 0x90;  /* NOP */  ++bsBiosMovOff;
       newboot[bsBiosMovOff] = 0x90;  /* NOP */  ++bsBiosMovOff;
     }
-    else
-    {
-      printf("%s : fat boot sector does not match expected layout\n", pgm);
-      exit(1);
-    }
+  }
+  else
+  {
+    printf("%s: Internal error: Unit save unexpected content\n", pgm);
+    exit(1);
   }
 
   if (opts->verbose) /* display information about filesystem */
@@ -1725,6 +1762,7 @@ void put_boot(SYSOptions *opts)
   
   {
     int i = 0;
+    /* magic offset: (first) kernel filename */
     memset(&newboot[0x1f1], ' ', 11);
     while (opts->kernel.kernel[i] && opts->kernel.kernel[i] != '.')
     {
@@ -1781,7 +1819,7 @@ void put_boot(SYSOptions *opts)
     */
     if ((fs == FAT32) && !opts->skipBakBSCopy)
     {
-      bs32 = (struct bootsectortype32 *)&newboot;
+      bs32 = (struct bootsectortype32 *)newboot;
 #ifdef DEBUG
       printf("writing backup bootsector to sector %d\n", bs32->bsBackupBoot);
 #endif

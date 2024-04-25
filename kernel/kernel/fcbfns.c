@@ -90,7 +90,7 @@ BYTE FAR *FatGetDrvData(UBYTE drive, UBYTE * pspc, UWORD * bps, UWORD * nc)
 #ifndef IPL
 UWORD FcbParseFname(UBYTE *wTestMode, const BYTE FAR * lpFileName, fcb FAR * lpFcb)
 {
-  WORD wRetCodeName = FALSE, wRetCodeExt = FALSE;
+  WORD wRetCodeDrive = FALSE, wRetCodeName = FALSE, wRetCodeExt = FALSE;
 
   /* pjv -- ExtFcbToFcb?                                          */
   
@@ -105,18 +105,20 @@ UWORD FcbParseFname(UBYTE *wTestMode, const BYTE FAR * lpFileName, fcb FAR * lpF
   lpFileName = ParseSkipWh(lpFileName);
 
   /* Now check for drive specification                            */
-  /* If drive specified, set to it (when valid) otherwise         */
+  /* If drive specified, set to it otherwise                      */
   /* set to default drive unless leave as-is requested            */
-  if (*(lpFileName + 1) == ':')
+
+  /* Undocumented behavior: should keep parsing even if drive     */
+  /* specification is invalid  -- tkchia 20220715                 */
+  /* drive specification can refer to an invalid drive, but must  */
+  /* not itself be a file name delimiter!  -- tkchia 20220716     */
+  if (!TestFieldSeps(lpFileName) && *(lpFileName + 1) == ':')
   {
     /* non-portable construct to be changed                 */
     REG UBYTE Drive = DosUpFChar(*lpFileName) - 'A';
 
     if (get_cds(Drive) == NULL)
-    {
-      *wTestMode = PARSE_RET_BADDRIVE;
-      return FP_OFF(lpFileName);
-    }
+      wRetCodeDrive = TRUE;
 
     lpFcb->fcb_drive = Drive + 1;
     lpFileName += 2;
@@ -163,7 +165,12 @@ UWORD FcbParseFname(UBYTE *wTestMode, const BYTE FAR * lpFileName, fcb FAR * lpF
         GetNameField(++lpFileName, (BYTE FAR *) lpFcb->fcb_fext,
                      FEXT_SIZE, (BOOL *) & wRetCodeExt);
 
-  *wTestMode = (wRetCodeName | wRetCodeExt) ? PARSE_RET_WILD : PARSE_RET_NOWILD;
+  if (wRetCodeDrive)
+    *wTestMode = PARSE_RET_BADDRIVE;
+  else if (wRetCodeName | wRetCodeExt)
+    *wTestMode = PARSE_RET_WILD;
+  else
+    *wTestMode = PARSE_RET_NOWILD;
   return FP_OFF(lpFileName);
 }
 
@@ -510,6 +517,8 @@ UBYTE FcbDelete(xfcb FAR * lpXfcb)
 
 UBYTE FcbRename(xfcb FAR * lpXfcb)
 {
+  BYTE buf[FNAME_SIZE + FEXT_SIZE];
+  BOOL bWildCard;
   rfcb FAR *lpRenameFcb;
   COUNT FcbDrive;
   UBYTE result = FCB_SUCCESS;
@@ -517,7 +526,10 @@ UBYTE FcbRename(xfcb FAR * lpXfcb)
 
   /* Build a traditional DOS file name                            */
   lpRenameFcb = (rfcb FAR *) CommonFcbInit(lpXfcb, SecPathName, &FcbDrive);
-
+  /* expand wildcards in dest                                     */
+  GetNameField(lpRenameFcb->renNewName, buf, FNAME_SIZE, &bWildCard);
+  GetNameField(lpRenameFcb->renNewExtent, buf + FNAME_SIZE, FEXT_SIZE, &bWildCard);
+  
   /* check for a device                                           */
   if (IsDevice(SecPathName))
   {
@@ -541,6 +553,7 @@ UBYTE FcbRename(xfcb FAR * lpXfcb)
       fcb LocalFcb;
       BYTE *pToName;
       const BYTE FAR *pFromPattern = Dmatch.dm_name;
+      const char *pToPattern = buf;
       int i;
       UBYTE mode = 0;
 
@@ -549,13 +562,12 @@ UBYTE FcbRename(xfcb FAR * lpXfcb)
       /* I'm cheating because this assumes that the   */
       /* struct alignments are on byte boundaries     */
       pToName = LocalFcb.fcb_fname;
-      pFromPattern = lpRenameFcb->renNewName;
       for (i = 0; i < FNAME_SIZE + FEXT_SIZE; i++)
       {
-        if (*pFromPattern != '?')
-          *pToName = *pFromPattern;
+        if (*pToPattern != '?')
+          *pToName = *pToPattern;
         pToName++;
-        pFromPattern++;
+        pToPattern++;
       }
 
       SecPathName[0] = 'A' + FcbDrive - 1;
@@ -643,17 +655,20 @@ UBYTE FcbFindFirstNext(xfcb FAR * lpXfcb, BOOL First)
 
   /* Next initialze local variables by moving them from the fcb   */
   lpFcb = CommonFcbInit(lpXfcb, SecPathName, &FcbDrive);
-  /* Reconstrct the dirmatch structure from the fcb - doesn't hurt for first */
-  Dmatch.dm_drive = lpFcb->fcb_sftno;
+  if (First)
+  {
+    /* Reconstruct the dirmatch structure from the fcb */
+    Dmatch.dm_drive = lpFcb->fcb_sftno;
 
-  fmemcpy(Dmatch.dm_name_pat, lpFcb->fcb_fname, FNAME_SIZE + FEXT_SIZE);
-  DosUpFMem((BYTE FAR *) Dmatch.dm_name_pat, FNAME_SIZE + FEXT_SIZE);
+    fmemcpy(Dmatch.dm_name_pat, lpFcb->fcb_fname, FNAME_SIZE + FEXT_SIZE);
+    DosUpFMem((BYTE FAR *) Dmatch.dm_name_pat, FNAME_SIZE + FEXT_SIZE);
   
-  Dmatch.dm_attr_srch = wAttr;
-  Dmatch.dm_entry = lpFcb->fcb_strtclst;
-  Dmatch.dm_dircluster = lpFcb->fcb_dirclst;
+    Dmatch.dm_attr_srch = wAttr;
+    Dmatch.dm_entry = lpFcb->fcb_strtclst;
+    Dmatch.dm_dircluster = lpFcb->fcb_dirclst;
 
-  wAttr = D_ALL;
+    wAttr = D_ALL;
+  }
   
   if ((xfcb FAR *) lpFcb != lpXfcb)
   {
