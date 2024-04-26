@@ -28,9 +28,12 @@
 #include <ctype.h>
 #include <string.h>
 #include <io.h>
-#include <dir.h>
+#include <direct.h>
 #include <dos.h>
 #include <sys/stat.h>
+#include <conio.h>
+
+#include "tcc2wat.h"
 
 /*-------------------------------------------------------------------------*/
 /* COMPILER SPECIFICA                                                      */
@@ -406,7 +409,7 @@ void replace_file(char src_filename[], char dest_filename[]) {
     }
 
     /* get file attribute from destination file */
-    fileattrib = _chmod(dest_filename, 0);
+    fileattrib = _tcc_chmod(dest_filename, 0);
 
     /* check destination file for write permission */
     if (fileattrib & (64 ^ FA_RDONLY) != 0) {
@@ -419,7 +422,7 @@ void replace_file(char src_filename[], char dest_filename[]) {
         /* not in preview mode -> remove readonly attribute from */
         /* destination file */
         fileattrib = fileattrib ^ FA_RDONLY;
-        _chmod(dest_filename, 1, fileattrib);
+        _tcc_chmod(dest_filename, 1, fileattrib);
       }
     }
 
@@ -434,7 +437,7 @@ void replace_file(char src_filename[], char dest_filename[]) {
         /* not in preview mode -> remove hidden and system attribute from */
         /* destination file */
         fileattrib = fileattrib ^ FA_HIDDEN ^ FA_SYSTEM;
-        _chmod(dest_filename, 1, fileattrib);
+        _tcc_chmod(dest_filename, 1, fileattrib);
       }
     }
   }
@@ -535,6 +538,6 @@ void copy_file(char src_filename[], char dest_filename[]) {
   fclose(dest_file);
 
   /* copy file attributes */
-  fileattrib = _chmod(src_filename, 0);
-  _chmod(dest_filename, 1, fileattrib);
+  fileattrib = _tcc_chmod(src_filename, 0);
+  _tcc_chmod(dest_filename, 1, fileattrib);
 }

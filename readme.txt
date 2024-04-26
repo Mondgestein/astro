@@ -18,7 +18,6 @@
     MORE         Turbo C++           1.01
     MOVE         Turbo C++           1.01
     NANSI        Macro Assembler     3.00
-    REPLACE      Turbo C++           3.00
     SORT         Turbo C++           1.01
     TREE         Turbo C++           1.01
     XCOPY        Turbo C++           1.01

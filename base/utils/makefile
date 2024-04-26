@@ -85,9 +85,9 @@ all: .SYMBOLIC
      $(MAKE)
      cd ..
 
-#     cd replace
-#     $(MAKE)
-#     cd ..
+     cd replace
+     $(MAKE)
+     cd ..
 
      cd sort
      $(MAKE)
