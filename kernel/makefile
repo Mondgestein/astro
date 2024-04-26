@@ -120,7 +120,6 @@ all:
 	cd sys && $(MAKE) production
 	cd kernel && $(MAKE) production
 	cd country && $(MAKE) DIRSEP=$(DIRSEP) CP=$(CP) production
-	cd setver && $(MAKE) production
 	$(MAKEREMOVE)
 
 clean:
@@ -132,7 +131,6 @@ clean:
 	cd sys && $(MAKE) clean
 	cd kernel && $(MAKE) clean
 	cd country && $(MAKE) clean
-	cd setver && $(MAKE) clean
 	$(MAKEREMOVE)
 
 clobber:
@@ -144,5 +142,4 @@ clobber:
 	cd sys && $(MAKE) clobber
 	cd kernel && $(MAKE) clobber
 	cd country && $(MAKE) clobber
-	cd setver && $(MAKE) clobber
 	$(MAKEREMOVE)

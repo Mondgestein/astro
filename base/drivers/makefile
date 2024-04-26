@@ -5,3 +5,7 @@ all: .SYMBOLIC
      $(MAKE)
      cd ..
 
+     cd setver
+     $(MAKE)
+     cd ..
+

@@ -27,9 +27,6 @@ cd ..\sys
 cd ..\kernel
 %MAKE% clean
 
-cd ..\setver
-%MAKE% clean
-
 cd ..\hdr
 if exist *.bak del *.bak
 
