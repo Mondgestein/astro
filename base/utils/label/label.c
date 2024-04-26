@@ -42,7 +42,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../kitten/kitten.h"
+#include "kitten.h"
 
 #if 1
 int Xprintf(const char * fmt, ...);

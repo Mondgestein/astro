@@ -13,7 +13,6 @@
     FDISK        Turbo C++           3.00
     FC           Turbo C++           1.01
     FIND         Turbo C++           1.01
-    LABEL        Turbo C++           1.01
     MODE         Turbo C++           1.01
     MORE         Turbo C++           1.01
     MOVE         Turbo C++           1.01

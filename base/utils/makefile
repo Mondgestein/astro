@@ -53,9 +53,9 @@ all: .SYMBOLIC
      $(MAKE)
      cd ..
 
-#     cd label
-#     $(MAKE)
-#     cd ..
+     cd label
+     $(MAKE)
+     cd ..
 
      cd lbacache
      $(MAKE)
