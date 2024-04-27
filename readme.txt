@@ -14,7 +14,6 @@
     FC           Turbo C++           1.01
     FIND         Turbo C++           1.01
     MODE         Turbo C++           1.01
-    MORE         Turbo C++           1.01
     MOVE         Turbo C++           1.01
     NANSI        Macro Assembler     3.00
     SORT         Turbo C++           1.01

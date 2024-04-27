@@ -1,13 +1,14 @@
 
-!include "../../../turbo.mak"
+!include "../../../config.mak"
 
 
-CFLAGS = $(CFLAGS) -w -k-
+LFLAGS = $(LFLAGS) -bcl=com
 
 
-all: more.exe
+all: more.com
 
 
-more.exe: more.c kitten.c tcdummy.c talloc.c prf.c lfnapi.c l2s95.c find95.c
-          $(CC) $(CFLAGS) -e$@ $<
+more.com: more.obj
+          $(CL) $(LFLAGS) -fe=$@ $<
+          upx --best --8086 $@
           copy $@ ..\..\..\binaries
