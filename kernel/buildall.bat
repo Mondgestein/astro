@@ -14,7 +14,7 @@ set onerror=if not "%XERROR%" == "" goto daswarwohlnix
 
 :***** MSCL kernels
 
-call config.bat
+call ..\config.bat
 set dos4g=quiet
 
 if "%MS_BASE%" == "" goto no_ms

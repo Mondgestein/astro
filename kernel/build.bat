@@ -20,10 +20,10 @@ if "%XERROR%" == "" goto noenv
 if "%1" == "-r" call clobber.bat
 if "%1" == "-r" shift
 
-if not exist config.bat echo You must copy CONFIG.B to CONFIG.BAT and edit it to reflect your setup!
-if not exist config.bat goto abort
+if not exist ..\config.bat echo You must copy CONFIG.B to CONFIG.BAT and edit it to reflect your setup!
+if not exist ..\config.bat goto abort
 
-call config.bat
+call ..\config.bat
 :-if "%LAST%" == "" goto noenv
 set dos4g=quiet
 

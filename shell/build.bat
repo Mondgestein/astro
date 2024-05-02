@@ -11,9 +11,9 @@ if "%SWAP%"=="NO" call dmake dist
 set SWAP=
 
 set COMPILER=TURBOCPP
-if not exist config.bat goto err3
+if not exist ..\config.bat goto err3
 if not exist config.mak goto err2
-call config.bat
+call ..\config.bat
 if exist lastmake.mk call clean.bat
 if "%1"=="-r" call clean.bat
 if "%1"=="-r" shift
